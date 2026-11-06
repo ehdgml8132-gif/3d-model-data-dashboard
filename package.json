@@ -17,11 +17,19 @@
   "dependencies": {
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.4.0",
+    "exceljs": "4.4.0",
+    "fflate": "0.8.3",
     "lucide-react": "^0.468.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "recharts": "^3.3.0",
-    "three": "^0.181.0"
+    "three": "^0.181.0",
+    "web-ifc": "0.0.78"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
   },
   "devDependencies": {
     "@playwright/test": "^1.56.0",

@@ -1,4 +1,13 @@
-import { Component, Suspense, lazy, useEffect, useState, type ReactNode } from 'react'
+import {
+  Component,
+  Suspense,
+  lazy,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import {
   ArrowLeft,
   Box,
@@ -8,6 +17,7 @@ import {
   Coffee,
   Cuboid,
   Database,
+  Link2,
   Layers3,
   LoaderCircle,
   MousePointer2,
@@ -15,31 +25,86 @@ import {
   Search,
   Shapes,
   SlidersHorizontal,
+  Upload,
+  X,
 } from 'lucide-react'
 import {
   BUILDING_ELEMENTS,
-  BUILDING_FLOORS,
+  type BuildingElement,
   type ElementKind,
   type FloorFilter,
 } from '../data/building'
-import { ELEMENT_KIND_LABELS, formatVolume, getBuildingSummary } from '../lib/building'
+import { ELEMENT_KIND_LABELS, formatVolume } from '../lib/building'
+import { loadIfcFile } from '../ifc/client'
+import { MAX_IFC_FILE_BYTES } from '../ifc/limits'
+import type { IfcModel } from '../ifc/types'
+import BusinessDataPanel, { type BusinessConnection } from './BusinessDataPanel'
+import { useSessionState } from '../lib/useSessionState'
 import './building.css'
 
 const BuildingScene = lazy(() => import('./BuildingScene'))
-const KIND_LABEL = ELEMENT_KIND_LABELS
-const KIND_COLOR: Record<ElementKind, string> = {
+const IfcScene = lazy(() => import('./IfcScene'))
+const IFC_TABLE_PAGE_SIZE = 200
+type DisplayKind = ElementKind | 'other'
+type DisplayElement = {
+  id: string
+  globalId: string
+  name: string
+  tag?: string
+  ifcClass: string
+  kind: DisplayKind
+  floor: string
+  material: string
+  volume: number | null
+  dimensions?: [number, number, number]
+  properties: { group: string; name: string; value: string }[]
+}
+const SAMPLE_ELEMENTS: DisplayElement[] = BUILDING_ELEMENTS.map((element) => ({
+  ...element,
+  properties: [],
+}))
+const KIND_LABEL: Record<DisplayKind, string> = { ...ELEMENT_KIND_LABELS, other: '기타' }
+const KIND_COLOR: Record<DisplayKind, string> = {
   column: '#e2d9c7',
   beam: '#bc9f78',
   slab: '#95b5bd',
   wall: '#d2d6ca',
+  other: '#b7b3c7',
 }
-const floorLabel = (floor: string) => `${floor.slice(0, 1)}층`
+const floorLabel = (floor: string) => (/^[123]F$/.test(floor) ? `${floor.slice(0, 1)}층` : floor)
 const number = (value: number) =>
   new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 }).format(value)
 const volumeNumber = (value: number) =>
   new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(
     value,
   )
+function summarize(elements: DisplayElement[]) {
+  const known = elements.filter((element) => element.volume !== null)
+  const total = (items: DisplayElement[]) =>
+    Number(items.reduce((sum, item) => sum + (item.volume ?? 0), 0).toFixed(6))
+  return {
+    elementCount: elements.length,
+    totalVolume: total(elements),
+    knownVolumeCount: known.length,
+    missingVolumeCount: elements.length - known.length,
+    floorCount: new Set(elements.map((element) => element.floor)).size,
+    byMaterial: [
+      ...new Set(
+        elements.map((element) => element.material).filter((material) => material !== '미지정'),
+      ),
+    ],
+    byKind: (Object.keys(KIND_LABEL) as DisplayKind[]).map((kind) => {
+      const items = elements.filter((element) => element.kind === kind)
+      return {
+        kind,
+        label: KIND_LABEL[kind],
+        count: items.length,
+        volume: total(items),
+        knownVolumeCount: items.filter((element) => element.volume !== null).length,
+      }
+    }),
+  }
+}
 
 class BuildingSceneBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false }
@@ -64,30 +129,152 @@ class BuildingSceneBoundary extends Component<{ children: ReactNode }, { failed:
 }
 
 export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () => void }) {
-  const [floor, setFloor] = useState<FloorFilter>('all')
-  const [activeView, setActiveView] = useState<'space' | 'data'>('space')
-  const [kind, setKind] = useState<ElementKind | 'all'>('all')
-  const [query, setQuery] = useState('')
-  const [selectedId, setSelectedId] = useState('1F-C09')
+  const [floor, setFloor] = useSessionState('building:floor', 'all')
+  const [activeView, setActiveView] = useSessionState<'space' | 'data'>('building:view', 'space')
+  const [kind, setKind] = useSessionState<DisplayKind | 'all'>('building:kind', 'all')
+  const [query, setQuery] = useSessionState('building:query', '')
+  const [selectedId, setSelectedId] = useSessionState('building:selected', '1F-C09')
   const [resetKey, setResetKey] = useState(0)
-  const floorElements = BUILDING_ELEMENTS.filter(
-    (element) => floor === 'all' || element.floor === floor,
+  const [ifcModel, setIfcModel] = useSessionState<IfcModel | null>('building:model', null)
+  const [modelVersion, setModelVersion] = useState(0)
+  const [progress, setProgress] = useState<{ percent: number; message: string } | null>(null)
+  const [importError, setImportError] = useState('')
+  const [importNotice, setImportNotice] = useState('')
+  const [business, setBusiness] = useSessionState<BusinessConnection | null>(
+    'building:business',
+    null,
   )
-  const dataElements = floorElements.filter(
-    (element) =>
-      (kind === 'all' || element.kind === kind) &&
-      `${element.id} ${element.name} ${element.ifcClass} ${element.material}`
-        .toLocaleLowerCase()
-        .includes(query.toLocaleLowerCase().trim()),
+  const [businessOpen, setBusinessOpen] = useState(false)
+  const [tablePage, setTablePage] = useState(0)
+  const ifcInput = useRef<HTMLInputElement>(null)
+  const importRequest = useRef<{ controller: AbortController; token: number } | null>(null)
+  const importToken = useRef(0)
+  const elements: DisplayElement[] = useMemo(
+    () => ifcModel?.elements ?? SAMPLE_ELEMENTS,
+    [ifcModel],
+  )
+  const floors = useMemo(() => [...new Set(elements.map((element) => element.floor))], [elements])
+  const floorElements = useMemo(
+    () => elements.filter((element) => floor === 'all' || element.floor === floor),
+    [elements, floor],
+  )
+  const dataElements = useMemo(
+    () =>
+      floorElements.filter(
+        (element) =>
+          (kind === 'all' || element.kind === kind) &&
+          `${element.id} ${element.name} ${element.ifcClass} ${element.material} ${element.globalId} ${element.tag ?? ''}`
+            .toLocaleLowerCase()
+            .includes(query.toLocaleLowerCase().trim()),
+      ),
+    [floorElements, kind, query],
   )
   const visible = activeView === 'data' ? dataElements : floorElements
+  const pageCount = ifcModel ? Math.max(1, Math.ceil(visible.length / IFC_TABLE_PAGE_SIZE)) : 1
+  const currentPage = Math.min(tablePage, pageCount - 1)
+  const tableElements = ifcModel
+    ? visible.slice(currentPage * IFC_TABLE_PAGE_SIZE, (currentPage + 1) * IFC_TABLE_PAGE_SIZE)
+    : visible
   const selected = floorElements.find((element) => element.id === selectedId) ?? floorElements[0]
-  const summary = getBuildingSummary(visible)
-  const fullSummary = getBuildingSummary(BUILDING_ELEMENTS)
+  const summary = useMemo(() => summarize(visible), [visible])
+  const fullSummary = useMemo(() => summarize(elements), [elements])
   const maxKindVolume = Math.max(1, ...summary.byKind.map((row) => row.volume))
   useEffect(() => {
     if (selected && selected.id !== selectedId) setSelectedId(selected.id)
   }, [selected, selectedId])
+  useEffect(() => setTablePage(0), [ifcModel, floor, activeView, kind, query])
+  useEffect(
+    () => () => {
+      importRequest.current?.controller.abort()
+      importRequest.current = null
+    },
+    [],
+  )
+
+  async function importIfc(file?: File) {
+    if (!file) return
+    importRequest.current?.controller.abort()
+    importRequest.current = null
+    setProgress(null)
+    setImportError('')
+    setImportNotice('')
+    if (!/\.ifc$/i.test(file.name)) {
+      setImportError('IFC 파일을 선택해주세요.')
+      return
+    }
+    if (file.size > MAX_IFC_FILE_BYTES) {
+      setImportError('150MB 이하의 IFC 파일을 선택해주세요.')
+      return
+    }
+    const controller = new AbortController()
+    const token = ++importToken.current
+    importRequest.current = { controller, token }
+    setProgress({ percent: 0, message: 'IFC 모델을 준비하고 있습니다.' })
+    try {
+      const model = await loadIfcFile(file, {
+        signal: controller.signal,
+        onProgress: (next) => {
+          if (importRequest.current?.token === token) setProgress(next)
+        },
+      })
+      if (controller.signal.aborted || importRequest.current?.token !== token) return
+      setIfcModel(model)
+      setModelVersion((value) => value + 1)
+      setBusiness(null)
+      setBusinessOpen(false)
+      clearFilters()
+      setSelectedId(model.elements[0]?.id ?? '')
+      setResetKey((value) => value + 1)
+      setImportNotice(
+        `${model.name} 모델을 불러왔습니다. 업무 데이터 연결은 새 모델에 맞게 다시 설정해주세요.`,
+      )
+    } catch (cause) {
+      if (importRequest.current?.token === token && !controller.signal.aborted)
+        setImportError(
+          cause instanceof Error
+            ? cause.message
+            : 'IFC 파일을 읽지 못했습니다. 기존 모델은 유지됩니다.',
+        )
+    } finally {
+      if (importRequest.current?.token === token) {
+        importRequest.current = null
+        setProgress(null)
+      }
+      if (ifcInput.current) ifcInput.current.value = ''
+    }
+  }
+  function cancelImport() {
+    importRequest.current?.controller.abort()
+    importRequest.current = null
+    setProgress(null)
+    setImportNotice('업로드를 취소했습니다. 기존 모델을 유지합니다.')
+  }
+  function restoreSample() {
+    cancelImport()
+    setIfcModel(null)
+    setModelVersion((value) => value + 1)
+    setBusiness(null)
+    setBusinessOpen(false)
+    clearFilters()
+    setSelectedId('1F-C09')
+    setResetKey((value) => value + 1)
+    setImportError('')
+    setImportNotice('건물 샘플로 돌아왔습니다.')
+  }
+  const sampleVisible: BuildingElement[] = useMemo(
+    () =>
+      ifcModel
+        ? []
+        : BUILDING_ELEMENTS.filter((element) => visible.some((item) => item.id === element.id)),
+    [ifcModel, visible],
+  )
+  const sampleFloor: FloorFilter =
+    floor === '1F' || floor === '2F' || floor === '3F' ? floor : 'all'
+  const selectedBusiness = selected ? business?.result.byElementId.get(selected.id) : undefined
+  const propertyGroups = selected
+    ? [...new Set(selected.properties.map((property) => property.group))]
+    : []
+  const visibleIfcIds = useMemo(() => visible.map((element) => element.id), [visible])
 
   function clearFilters() {
     setFloor('all')
@@ -104,7 +291,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
   }
 
   return (
-    <div className="app-shell building-app">
+    <div className={`app-shell building-app ${ifcModel ? 'has-ifc' : ''}`}>
       <aside className="sidebar">
         <a
           className="brand"
@@ -128,8 +315,8 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
             <Building2 size={20} />
           </div>
           <div>
-            <strong>모노 오피스</strong>
-            <span>건물 모델 워크스페이스</span>
+            <strong>{ifcModel ? '나의 건물 모델' : '모노 오피스'}</strong>
+            <span>{ifcModel ? 'IFC 모델 워크스페이스' : '건물 모델 워크스페이스'}</span>
           </div>
           <span className="workspace-dot" />
         </div>
@@ -169,7 +356,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
             onClick={() => setActiveView('data')}
           >
             <Database size={19} />
-            부재 데이터<span className="nav-count">{BUILDING_ELEMENTS.length}</span>
+            부재 데이터<span className="nav-count">{elements.length}</span>
           </button>
         </nav>
         <div className="sidebar-note">
@@ -182,14 +369,16 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
             <br />
             구조와 물량을 확인하세요.
           </p>
-          <span className="building-sidebar-badge">3 FLOORS · BIM DEMO</span>
+          <span className="building-sidebar-badge">
+            {ifcModel ? 'IFC MODEL · LOCAL VIEW' : '3 FLOORS · BIM DEMO'}
+          </span>
         </div>
         <div className="sidebar-bottom">
           <div className="profile">
             <span>MO</span>
             <div>
-              <strong>모노 오피스</strong>
-              <small>가상의 건물 예제</small>
+              <strong>{ifcModel ? '나의 건물 모델' : '모노 오피스'}</strong>
+              <small>{ifcModel ? '업로드한 IFC 모델' : '가상의 건물 예제'}</small>
             </div>
             <Building2 size={17} />
           </div>
@@ -205,7 +394,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
           <div className="topbar-right">
             <span className="connection">
               <i />
-              건물 샘플 · 가상 데이터
+              {ifcModel ? 'IFC 모델 · 브라우저 처리' : '건물 샘플 · 가상 데이터'}
             </span>
             <span className="top-avatar">B</span>
           </div>
@@ -224,20 +413,101 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                   : '부재의 분류·재료·치수와 물량을 검색하고, 3D 공간에서 확인하세요.'}
               </p>
             </div>
-            <button
-              className="button secondary building-back"
-              aria-label="카페 샘플로 돌아가기"
-              onClick={onBackToCafe}
-            >
-              <ArrowLeft size={15} />
-              카페 샘플로 돌아가기
-            </button>
+            <div className="page-actions building-header-actions">
+              <button className="button secondary" onClick={() => setBusinessOpen(true)}>
+                <Link2 size={15} />
+                업무 데이터 연결
+              </button>
+              <button className="button primary" onClick={() => ifcInput.current?.click()}>
+                <Upload size={15} />
+                IFC 모델 업로드
+              </button>
+              <button
+                className="button secondary building-back"
+                aria-label="카페 샘플로 돌아가기"
+                onClick={onBackToCafe}
+              >
+                <ArrowLeft size={15} />
+                카페 샘플로 돌아가기
+              </button>
+            </div>
           </section>
+          <input
+            ref={ifcInput}
+            type="file"
+            className="file-input"
+            aria-label="IFC 파일 선택"
+            accept=".ifc"
+            onChange={(event) => void importIfc(event.target.files?.[0])}
+          />
+          {progress && (
+            <section className="building-import-progress" role="status">
+              <LoaderCircle size={18} className="spin" />
+              <div>
+                <strong>{progress.message}</strong>
+                <progress max={100} value={progress.percent} />
+                <span>{Math.round(progress.percent)}%</span>
+              </div>
+              <button className="button secondary" onClick={cancelImport}>
+                <X size={14} />
+                업로드 취소
+              </button>
+            </section>
+          )}
+          {importError && (
+            <p className="upload-error" role="alert">
+              {importError}
+            </p>
+          )}
+          {importNotice && (
+            <p className="building-import-notice" role="status">
+              {importNotice}
+            </p>
+          )}
           <section className="building-demo-note">
-            <span className="badge">BIM DEMO</span>
-            <span>3층 사무동의 구조 예제입니다. 실제 IFC 파일을 읽은 모델이 아닙니다.</span>
-            <span className="building-model-meta">8 × 6m · 3층</span>
+            <span className="badge">{ifcModel ? 'IFC MODEL' : 'BIM DEMO'}</span>
+            <span className="building-source-name" title={ifcModel?.name}>
+              {ifcModel
+                ? `업로드한 IFC 모델 · ${ifcModel.name}`
+                : '3층 사무동의 구조 예제입니다. 실제 IFC 파일을 읽은 모델이 아닙니다.'}
+            </span>
+            {ifcModel ? (
+              <button className="text-button" onClick={restoreSample}>
+                샘플로 돌아가기
+              </button>
+            ) : (
+              <span className="building-model-meta">8 × 6m · 3층</span>
+            )}
           </section>
+          {ifcModel && ifcModel.warnings.length > 0 && (
+            <details className="building-model-warnings">
+              <summary>모델 읽기 안내 ({ifcModel.warnings.length}건)</summary>
+              <ul>
+                {ifcModel.warnings.map((warning, index) => (
+                  <li key={index}>{warning}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {business && (
+            <section className="business-connected-banner">
+              <Link2 size={17} />
+              <div>
+                <strong>{business.fileName}</strong>
+                <span>
+                  {business.table.name} · {business.modelKey} ↔ {business.column}
+                </span>
+              </div>
+              <span>
+                연결 {business.result.diagnostics.matchedElements} · 미연결{' '}
+                {business.result.diagnostics.unmatchedElements} · 중복{' '}
+                {business.result.diagnostics.ambiguousElements}
+              </span>
+              <button className="text-button" onClick={() => setBusiness(null)}>
+                업무 데이터 연결 해제
+              </button>
+            </section>
+          )}
           <div className="building-controls">
             <div className="building-floor-control">
               <Layers3 size={16} />
@@ -250,7 +520,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                 >
                   전체
                 </button>
-                {BUILDING_FLOORS.map((value) => (
+                {floors.map((value) => (
                   <button
                     key={value}
                     className={floor === value ? 'active' : ''}
@@ -275,22 +545,27 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
               },
               {
                 label: '총 체적',
-                value: formatVolume(summary.totalVolume),
-                note: '부재별 형상 체적의 합계',
+                value:
+                  summary.elementCount === 0 || summary.knownVolumeCount > 0
+                    ? formatVolume(summary.totalVolume)
+                    : '—',
+                note: ifcModel
+                  ? `수량 있는 ${summary.knownVolumeCount}개 합계 · ${summary.missingVolumeCount}개 미제공`
+                  : '부재별 형상 체적의 합계',
                 icon: Cuboid,
                 color: 'blue',
               },
               {
                 label: '표시 층',
                 value: `${summary.floorCount}개 층`,
-                note: '지상 1층부터 3층까지',
+                note: ifcModel ? 'IFC의 층 분류 기준 · 미지정 포함' : '지상 1층부터 3층까지',
                 icon: Layers3,
                 color: 'sand',
               },
               {
-                label: '재료 종류',
+                label: ifcModel ? '재료 표기' : '재료 종류',
                 value: `${summary.byMaterial.length}종`,
-                note: '현재 표시된 부재의 재료',
+                note: ifcModel ? '부재에 기록된 서로 다른 재료 표기' : '현재 표시된 부재의 재료',
                 icon: Shapes,
                 color: 'peach',
               },
@@ -316,8 +591,10 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                 <div className="card-heading">
                   <div className="heading-with-icon">
                     <Building2 size={19} />
-                    <h2>모노 오피스</h2>
-                    <span className="subtle-badge">STRUCTURE MODEL</span>
+                    <h2>{ifcModel ? '나의 건물 모델' : '모노 오피스'}</h2>
+                    <span className="subtle-badge">
+                      {ifcModel ? 'IFC MODEL' : 'STRUCTURE MODEL'}
+                    </span>
                   </div>
                   <button
                     className="icon-button reset-view"
@@ -331,10 +608,11 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                 <div className="building-scene-wrap">
                   <div className="scene-caption">
                     <span className="live-dot" />
-                    MONO OFFICE<span>{floor === 'all' ? '전체 층' : floorLabel(floor)}</span>
+                    {ifcModel ? 'IFC MODEL' : 'MONO OFFICE'}
+                    <span>{floor === 'all' ? '전체 층' : floorLabel(floor)}</span>
                   </div>
                   {visible.length ? (
-                    <BuildingSceneBoundary>
+                    <BuildingSceneBoundary key={modelVersion}>
                       <Suspense
                         fallback={
                           <div className="scene-fallback">
@@ -343,13 +621,23 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                           </div>
                         }
                       >
-                        <BuildingScene
-                          elements={visible}
-                          selectedId={selected?.id ?? ''}
-                          onSelect={setSelectedId}
-                          floor={floor}
-                          resetKey={resetKey}
-                        />
+                        {ifcModel ? (
+                          <IfcScene
+                            model={ifcModel}
+                            visibleIds={visibleIfcIds}
+                            selectedId={selected?.id ?? ''}
+                            onSelect={setSelectedId}
+                            resetKey={resetKey}
+                          />
+                        ) : (
+                          <BuildingScene
+                            elements={sampleVisible}
+                            selectedId={selected?.id ?? ''}
+                            onSelect={setSelectedId}
+                            floor={sampleFloor}
+                            resetKey={resetKey}
+                          />
+                        )}
                       </Suspense>
                     </BuildingSceneBoundary>
                   ) : (
@@ -368,12 +656,14 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                   </div>
                 </div>
                 <div className="building-legend">
-                  {Object.entries(KIND_LABEL).map(([value, label]) => (
-                    <span key={value}>
-                      <i style={{ background: KIND_COLOR[value as ElementKind] }} />
-                      {label}
-                    </span>
-                  ))}
+                  {ifcModel && <span>IFC 원본 재질</span>}
+                  {!ifcModel &&
+                    Object.entries(KIND_LABEL).map(([value, label]) => (
+                      <span key={value}>
+                        <i style={{ background: KIND_COLOR[value as DisplayKind] }} />
+                        {label}
+                      </span>
+                    ))}
                   <span className="building-selected-key">
                     <i />
                     선택한 부재
@@ -411,10 +701,22 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                     <div className="building-volume">
                       <span>선택 부재 체적</span>
                       <strong data-testid="building-selected-volume">
-                        {volumeNumber(selected.volume)}
-                        <small>m³</small>
+                        {selected.volume !== null ? (
+                          <>
+                            {volumeNumber(selected.volume)}
+                            <small>m³</small>
+                          </>
+                        ) : (
+                          '—'
+                        )}
                       </strong>
-                      <p>모형 치수에서 계산한 예제 물량</p>
+                      <p>
+                        {ifcModel
+                          ? selected.volume === null
+                            ? 'IFC에 체적 수량이 제공되지 않았습니다.'
+                            : 'IFC 수량 속성에서 읽은 체적입니다.'
+                          : '모형 치수에서 계산한 예제 물량'}
+                      </p>
                     </div>
                     <dl className="building-properties">
                       <div>
@@ -436,16 +738,104 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                       <div className="building-dimensions">
                         <dt>치수 X × Y × Z</dt>
                         <dd>
-                          {selected.dimensions.map((value) => number(value)).join(' × ')}
-                          <small> m</small>
+                          {selected.dimensions ? (
+                            <>
+                              {selected.dimensions.map((value) => number(value)).join(' × ')}
+                              <small> m</small>
+                            </>
+                          ) : (
+                            '—'
+                          )}
                         </dd>
                       </div>
                     </dl>
                     <div className="building-global-id">
-                      <span>예제 GlobalId</span>
-                      <code>{selected.globalId}</code>
-                      <p>실제 IFC에서 추출한 식별자가 아닙니다.</p>
+                      <span>{ifcModel ? 'GlobalId' : '예제 GlobalId'}</span>
+                      <code>{selected.globalId || '—'}</code>
+                      <p>
+                        {ifcModel
+                          ? `Tag: ${selected.tag || '미제공'} · Express ID: ${selected.id}`
+                          : '실제 IFC에서 추출한 식별자가 아닙니다.'}
+                      </p>
                     </div>
+                    {ifcModel && (
+                      <section className="building-ifc-properties">
+                        <h3>IFC 속성</h3>
+                        {propertyGroups.length ? (
+                          propertyGroups.map((group, index) => (
+                            <details key={group} open={index === 0}>
+                              <summary>{group}</summary>
+                              <dl>
+                                {selected.properties
+                                  .filter((property) => property.group === group)
+                                  .map((property, propertyIndex) => (
+                                    <div key={`${property.name}-${propertyIndex}`}>
+                                      <dt>{property.name}</dt>
+                                      <dd>{property.value || '—'}</dd>
+                                    </div>
+                                  ))}
+                              </dl>
+                            </details>
+                          ))
+                        ) : (
+                          <p>이 부재에는 추가 속성 세트가 없습니다.</p>
+                        )}
+                      </section>
+                    )}
+                    {business && (
+                      <section className="building-linked-data" aria-label="연결된 업무 데이터">
+                        <h3>연결된 업무 데이터</h3>
+                        {selectedBusiness?.status === 'matched' ? (
+                          <dl>
+                            {business.table.headers.map((header, index) => (
+                              <div key={header}>
+                                <dt>{header}</dt>
+                                <dd>{selectedBusiness.rows[0]?.[index] || '—'}</dd>
+                              </div>
+                            ))}
+                          </dl>
+                        ) : (
+                          <p>
+                            {selectedBusiness?.status === 'ambiguous'
+                              ? '중복 식별자가 있어 업무 데이터를 연결하지 않았습니다.'
+                              : '이 부재에 연결된 업무 데이터가 없습니다.'}
+                          </p>
+                        )}
+                        {selectedBusiness?.status === 'ambiguous' && (
+                          <div className="business-ambiguous-candidates">
+                            <strong>
+                              중복 후보 {selectedBusiness.rows.length}행 · 자동 선택하지 않음
+                            </strong>
+                            <div tabIndex={0} aria-label="중복 업무 데이터 후보">
+                              <table>
+                                <thead>
+                                  <tr>
+                                    {business.table.headers.map((header) => (
+                                      <th key={header}>{header}</th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {selectedBusiness.rows.slice(0, 10).map((row, index) => (
+                                    <tr key={index}>
+                                      {business.table.headers.map((_, column) => (
+                                        <td key={column}>{row[column] ?? ''}</td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            {selectedBusiness.rows.length > 10 && (
+                              <p>
+                                처음 10개 행을 표시합니다. 전체 후보는 업로드한 원본 파일에서
+                                확인해주세요.
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </section>
+                    )}
                   </>
                 ) : (
                   <div className="building-no-selection">
@@ -478,8 +868,14 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                           {row.label}
                         </span>
                         <strong>
-                          {volumeNumber(row.volume)}
-                          <small> m³</small>
+                          {row.count > 0 && row.knownVolumeCount === 0 ? (
+                            '—'
+                          ) : (
+                            <>
+                              {volumeNumber(row.volume)}
+                              <small> m³</small>
+                            </>
+                          )}
                         </strong>
                       </div>
                       <div className="building-bar-track">
@@ -490,7 +886,12 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                           }}
                         />
                       </div>
-                      <small>{row.count}개 부재</small>
+                      <small>
+                        {row.count}개 부재
+                        {ifcModel && row.count > row.knownVolumeCount
+                          ? ` · ${row.count - row.knownVolumeCount}개 수량 미제공`
+                          : ''}
+                      </small>
                     </div>
                   ))}
                   {summary.elementCount === 0 && (
@@ -500,9 +901,19 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                 <div className="building-quantity-note">
                   <Check size={14} />
                   <span>
-                    체적은 각 부재의 X × Y × Z입니다.
-                    <br />
-                    부재 간 겹침을 차감하지 않은 예제 수량입니다.
+                    {ifcModel ? (
+                      <>
+                        IFC에 제공된 체적 수량만 합산합니다.
+                        <br />
+                        수량이 없는 부재는 —로 표시하며 형상으로 추정하지 않습니다.
+                      </>
+                    ) : (
+                      <>
+                        체적은 각 부재의 X × Y × Z입니다.
+                        <br />
+                        부재 간 겹침을 차감하지 않은 예제 수량입니다.
+                      </>
+                    )}
                   </span>
                 </div>
               </article>
@@ -535,7 +946,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                     <select
                       aria-label="부재 종류"
                       value={kind}
-                      onChange={(e) => setKind(e.target.value as ElementKind | 'all')}
+                      onChange={(e) => setKind(e.target.value as DisplayKind | 'all')}
                     >
                       <option value="all">전체 종류</option>
                       {Object.entries(KIND_LABEL).map(([value, label]) => (
@@ -552,7 +963,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                       value={query}
                       maxLength={80}
                       onChange={(e) => setQuery(e.target.value)}
-                      placeholder="부재명, 코드, 재료 검색"
+                      placeholder="부재명, ID, GlobalId, Tag 검색"
                     />
                   </label>
                   {(query || kind !== 'all' || floor !== 'all') && (
@@ -577,16 +988,23 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                       <th>종류</th>
                       {activeView === 'data' && (
                         <>
+                          {ifcModel && (
+                            <>
+                              <th>GlobalId</th>
+                              <th>Tag</th>
+                            </>
+                          )}
                           <th>IFC 분류</th>
                           <th>재료</th>
                           <th>치수 X × Y × Z (m)</th>
                         </>
                       )}
                       <th>체적 (m³)</th>
+                      {business && <th>업무 데이터</th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {visible.map((element) => (
+                    {tableElements.map((element) => (
                       <tr
                         key={element.id}
                         className={selected?.id === element.id ? 'selected-row' : ''}
@@ -621,14 +1039,36 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                         <td>{KIND_LABEL[element.kind]}</td>
                         {activeView === 'data' && (
                           <>
+                            {ifcModel && (
+                              <>
+                                <td className="building-data-guid">{element.globalId || '—'}</td>
+                                <td>{element.tag || '—'}</td>
+                              </>
+                            )}
                             <td className="building-data-ifc">{element.ifcClass}</td>
                             <td>{element.material}</td>
                             <td className="building-data-dimensions">
-                              {element.dimensions.map((value) => number(value)).join(' × ')}
+                              {element.dimensions
+                                ? element.dimensions.map((value) => number(value)).join(' × ')
+                                : '—'}
                             </td>
                           </>
                         )}
-                        <td>{volumeNumber(element.volume)}</td>
+                        <td>{element.volume === null ? '—' : volumeNumber(element.volume)}</td>
+                        {business && (
+                          <td>
+                            <span
+                              className={`business-link-status ${business.result.byElementId.get(element.id)?.status ?? 'unmatched'}`}
+                            >
+                              {business.result.byElementId.get(element.id)?.status === 'matched'
+                                ? '연결됨'
+                                : business.result.byElementId.get(element.id)?.status ===
+                                    'ambiguous'
+                                  ? '중복'
+                                  : '미연결'}
+                            </span>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -641,6 +1081,34 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                   </div>
                 )}
               </div>
+              {ifcModel && visible.length > IFC_TABLE_PAGE_SIZE && (
+                <nav className="building-pagination" aria-label="부재 목록 페이지">
+                  <button
+                    className="button secondary"
+                    aria-label="이전 부재 페이지"
+                    disabled={currentPage === 0}
+                    onClick={() => setTablePage(currentPage - 1)}
+                  >
+                    이전
+                  </button>
+                  <span>
+                    {currentPage * IFC_TABLE_PAGE_SIZE + 1}–
+                    {Math.min((currentPage + 1) * IFC_TABLE_PAGE_SIZE, visible.length)} /{' '}
+                    {visible.length}개
+                    <small>
+                      {currentPage + 1} / {pageCount} 페이지
+                    </small>
+                  </span>
+                  <button
+                    className="button secondary"
+                    aria-label="다음 부재 페이지"
+                    disabled={currentPage >= pageCount - 1}
+                    onClick={() => setTablePage(currentPage + 1)}
+                  >
+                    다음
+                  </button>
+                </nav>
+              )}
             </article>
           </section>
           {activeView === 'data' && (
@@ -661,15 +1129,35 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
               </button>
             </section>
           )}
+          {(ifcModel || business) && (
+            <p className="ifc-session-note">
+              업로드한 모델과 업무 데이터는 이 페이지에서만 유지됩니다. 새로고침하거나 탭을 닫으면
+              다시 업로드해주세요.
+            </p>
+          )}
           <footer className="footer">
             <span>
               <Building2 size={13} />
               MONOSPACE <span className="footer-divider">/</span>건물에서 읽는 데이터
             </span>
-            <span>코드로 만든 BIM 예제 · IFC 업로드 미지원</span>
+            <span>
+              {ifcModel
+                ? '업로드한 IFC 모델 · 브라우저에서만 처리'
+                : '코드로 만든 BIM 예제 · IFC 파일 업로드 가능'}
+            </span>
           </footer>
         </main>
       </div>
+      {businessOpen && (
+        <BusinessDataPanel
+          elements={elements}
+          onClose={() => setBusinessOpen(false)}
+          onConnect={(connection) => {
+            setBusiness(connection)
+            setBusinessOpen(false)
+          }}
+        />
+      )}
     </div>
   )
 }

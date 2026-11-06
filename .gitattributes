@@ -1,2 +1,3 @@
 # Preserve UTF-8 BOM and CRLF for the Excel-compatible download template.
 public/sample-products.csv -text whitespace=cr-at-eol
+public/examples/*.csv -text whitespace=cr-at-eol

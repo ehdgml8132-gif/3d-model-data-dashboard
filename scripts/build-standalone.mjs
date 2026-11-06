@@ -2,6 +2,7 @@ import { build } from 'vite'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
 
 // A downloadable, self-contained copy. The ordinary web build keeps lazy chunks.
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -11,6 +12,21 @@ const csvUrl = `data:text/csv;charset=utf-8;base64,${csv.toString('base64')}`
 const faviconUrl = `data:image/svg+xml;base64,${favicon.toString('base64')}`
 const sampleUrlExpression = '`${import.meta.env.BASE_URL}sample-products.csv`'
 let sampleUrlInlined = false
+let workerInlined = false
+let wasmInlined = false
+const require = createRequire(import.meta.url)
+const engineRoot = dirname(require.resolve('web-ifc'))
+const wasm = await readFile(join(engineRoot, 'web-ifc.wasm'))
+const engineLicense = await readFile(join(engineRoot, 'LICENSE.md'), 'utf8')
+const wasmUrl = `data:application/wasm;base64,${wasm.toString('base64')}`
+const embeddedExamples = new Map()
+for (const name of ['authored-building.ifc', 'authored-building-data.csv']) {
+  const bytes = await readFile(join(root, 'public/examples', name))
+  embeddedExamples.set(
+    `examples/${name}`,
+    `data:${name.endsWith('.csv') ? 'text/csv;charset=utf-8' : 'application/octet-stream'};base64,${bytes.toString('base64')}`,
+  )
+}
 
 const result = await build({
   root,
@@ -21,15 +37,62 @@ const result = await build({
       name: 'standalone-sample-download',
       enforce: 'pre',
       transform(source, id) {
-        if (id.split('?')[0] !== join(root, 'src/App.tsx')) return
-        if (source.split(sampleUrlExpression).length !== 2) {
+        const file = id.split('?')[0]
+        let code = source.replace(
+          /`\$\{import\.meta\.env\.BASE_URL\}(examples\/[^`]+)`/g,
+          (expression, name) => {
+            const embedded = embeddedExamples.get(name)
+            return embedded ? JSON.stringify(embedded) : expression
+          },
+        )
+        if (file === join(root, 'src/ifc/client.ts')) {
+          const constructor =
+            /new Worker\(\s*new URL\('\.\/ifc\.worker\.ts',\s*import\.meta\.url\),\s*\{\s*type:\s*'module'\s*\}\s*\)/
+          if (!constructor.test(code))
+            throw new Error('Expected the IFC worker constructor for the standalone build.')
+          workerInlined = true
+          code = code
+            .replace(constructor, 'new StandaloneIfcWorker()')
+            .replace('new URL(`${import.meta.env.BASE_URL}ifc/`, document.baseURI).href', "''")
+          return {
+            code: `import StandaloneIfcWorker from './ifc.worker.ts?worker&inline'\n${code}`,
+            map: null,
+          }
+        }
+        if (file !== join(root, 'src/App.tsx'))
+          return code !== source ? { code, map: null } : undefined
+        if (code.split(sampleUrlExpression).length !== 2) {
           throw new Error('Expected one base-aware sample CSV URL expression in App.tsx.')
         }
         sampleUrlInlined = true
-        return { code: source.replace(sampleUrlExpression, JSON.stringify(csvUrl)), map: null }
+        return { code: code.replace(sampleUrlExpression, JSON.stringify(csvUrl)), map: null }
       },
     },
   ],
+  worker: {
+    // A classic inline worker also works for downloaded HTML with an opaque
+    // file/document origin; the hosted website still uses an ES module worker.
+    format: 'iife',
+    plugins: () => [
+      {
+        name: 'standalone-ifc-wasm',
+        enforce: 'pre',
+        transform(source, id) {
+          if (id.split('?')[0] !== join(root, 'src/ifc/ifc.worker.ts')) return
+          if (!source.includes('await api.Init(undefined, true)'))
+            throw new Error('Expected the IFC engine initialization for the standalone build.')
+          wasmInlined = true
+          return {
+            code: source.replace(
+              'await api.Init(undefined, true)',
+              `await api.Init(() => ${JSON.stringify(wasmUrl)}, true)`,
+            ),
+            map: null,
+          }
+        },
+      },
+    ],
+  },
   build: {
     write: false,
     cssCodeSplit: false,
@@ -38,6 +101,8 @@ const result = await build({
 })
 
 if (!sampleUrlInlined) throw new Error('The standalone sample CSV URL was not inlined.')
+if (!workerInlined || !wasmInlined)
+  throw new Error('The standalone IFC worker and engine must be embedded.')
 
 const outputs = Array.isArray(result) ? result.flatMap((item) => item.output) : result.output
 const entry = outputs.find((item) => item.type === 'chunk' && item.isEntry)
@@ -61,6 +126,15 @@ html = html.replace(
 html = html.replace(/<link\b[^>]*\brel="stylesheet"[^>]*>/g, '')
 html = html.replace(/<link\b[^>]*\brel="icon"[^>]*>/, `<link rel="icon" href="${faviconUrl}" />`)
 html = html.replace('</head>', () => `<style>${css}</style>\n</head>`)
+html = html.replace(
+  '</head>',
+  '<meta name="web-ifc-source" content="https://github.com/ThatOpen/engine_web-ifc; version 0.0.78; MPL-2.0" />\n</head>',
+)
+html = html.replace(
+  '</body>',
+  () =>
+    `<script type="text/plain" id="web-ifc-license">${engineLicense.replace(/<\/script/gi, '<\\/script')}</script>\n</body>`,
+)
 if (html.includes('/sample-products.csv') || /(?:src|href)="(?:\.\/)?assets\//.test(html)) {
   throw new Error('A local asset reference remains in the standalone preview.')
 }

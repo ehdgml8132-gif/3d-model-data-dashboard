@@ -1,0 +1,6 @@
+export const MAX_IFC_FILE_BYTES = 150 * 1024 * 1024
+export const MAX_IFC_GEOMETRY_BYTES = 240 * 1024 * 1024
+export const MAX_IFC_ELEMENTS = 50_000
+export const MAX_IFC_MESHES = 100_000
+export const MAX_IFC_PROPERTIES_PER_ELEMENT = 500
+export const MAX_IFC_PROPERTY_TEXT = 40 * 1024 * 1024

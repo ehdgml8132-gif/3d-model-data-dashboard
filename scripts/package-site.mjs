@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 // other archives in dist are deliberately excluded from the deployed site.
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = join(root, 'dist')
-for (const name of ['index.html', 'assets', 'favicon.svg', 'sample-products.csv']) {
+for (const name of ['index.html', 'assets', 'ifc', 'favicon.svg', 'sample-products.csv']) {
   await access(join(output, name))
 }
 
@@ -19,8 +19,10 @@ from zipfile import ZipFile, ZIP_DEFLATED
 
 root = Path(sys.argv[1]).resolve()
 destination = Path(sys.argv[2]).resolve()
-files = [root / name for name in ('index.html', 'favicon.svg', 'sample-products.csv')]
-files.extend(sorted((root / 'assets').rglob('*')))
+files = [root / name for name in ('index.html', 'favicon.svg', 'sample-products.csv', 'THIRD_PARTY.md') if (root / name).exists()]
+for directory in ('assets', 'ifc', 'examples'):
+    if (root / directory).exists():
+        files.extend(sorted((root / directory).rglob('*')))
 with ZipFile(destination, 'w', compression=ZIP_DEFLATED, compresslevel=9) as archive:
     for path in files:
         if path.is_file():
