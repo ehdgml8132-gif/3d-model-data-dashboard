@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type MutableRefObject } from 'react'
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { Edges, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
@@ -12,6 +12,8 @@ import {
 } from '../lib/sectionBox'
 import { FrameBoxCamera, SectionBoxVisual } from './SectionBox'
 import SectionBoxHandles from './SectionBoxHandles'
+import ProjectCameraSync from './ProjectCameraSync'
+import type { ProjectCamera } from '../projects/types'
 
 type Props = {
   model: IfcModel
@@ -24,6 +26,10 @@ type Props = {
   sectionBoxSelected?: boolean
   onSectionBoxSelect?: () => void
   onSectionBoxDeselect?: () => void
+  cameraRestore?: ProjectCamera | null
+  cameraRestoreKey?: number
+  onCameraChange?: (pose: ProjectCamera) => void
+  cameraCapture?: MutableRefObject<(() => ProjectCamera) | null>
 }
 
 type PlacedMesh = {
@@ -174,6 +180,10 @@ function ModelContents({
   onSectionBoxChange,
   sectionBoxSelected,
   onSectionBoxSelect,
+  cameraRestore,
+  cameraRestoreKey,
+  onCameraChange,
+  cameraCapture,
 }: Props) {
   const prepared = useMemo(() => prepareModel(model), [model])
   const visibilityKey = visibleIds.join('\u0000')
@@ -243,6 +253,14 @@ function ModelContents({
           bounds={clipBounds}
           settings={sectionBox}
           onChange={onSectionBoxChange}
+        />
+      )}
+      {onCameraChange && cameraCapture && (
+        <ProjectCameraSync
+          restore={cameraRestore ?? null}
+          restoreKey={cameraRestoreKey ?? 0}
+          onChange={onCameraChange}
+          captureRef={cameraCapture}
         />
       )}
     </>

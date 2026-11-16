@@ -43,6 +43,15 @@ import type { IfcModel } from '../ifc/types'
 import BusinessDataPanel, { type BusinessConnection } from './BusinessDataPanel'
 import BuildingAnalytics, { BuildingAnalyticsNote } from './BuildingAnalytics'
 import BuildingMetricFilter from './BuildingMetricFilter'
+import ProjectManager from './ProjectManager'
+import { joinBusinessRows } from '../lib/business'
+import { summarizeProject } from '../projects/storage'
+import type {
+  ProjectCamera,
+  ProjectSnapshot,
+  ProjectSummary,
+  SavedProject,
+} from '../projects/types'
 import {
   createBuildingMetricFilters,
   filterBuildingMetricElements,
@@ -160,6 +169,17 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
   }, [setSelectedId])
   const [resetKey, setResetKey] = useState(0)
   const [ifcModel, setIfcModel] = useSessionState<IfcModel | null>('building:model', null)
+  const [sourceIfcFile, setSourceIfcFile] = useSessionState<File | null>('building:ifc-file', null)
+  const [currentProject, setCurrentProject] = useSessionState<ProjectSummary | null>(
+    'building:project',
+    null,
+  )
+  const [currentProjectStored, setCurrentProjectStored] = useSessionState(
+    'building:project-stored',
+    false,
+  )
+  const [cameraPose, setCameraPose] = useSessionState<ProjectCamera | null>('building:camera', null)
+  const [cameraRestoreKey, setCameraRestoreKey] = useState(0)
   const [modelVersion, setModelVersion] = useState(0)
   const [progress, setProgress] = useState<{ percent: number; message: string } | null>(null)
   const [importError, setImportError] = useState('')
@@ -173,6 +193,15 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
   const ifcInput = useRef<HTMLInputElement>(null)
   const importRequest = useRef<{ controller: AbortController; token: number } | null>(null)
   const importToken = useRef(0)
+  const cameraGeneration = useRef(0)
+  const cameraCapture = useRef<(() => ProjectCamera) | null>(null)
+  const restoredTablePage = useRef<number | null>(null)
+  const reportCamera = useCallback(
+    (pose: ProjectCamera) => {
+      if (cameraGeneration.current === modelVersion) setCameraPose(pose)
+    },
+    [modelVersion, setCameraPose],
+  )
   const elements: DisplayElement[] = useMemo(
     () => ifcModel?.elements ?? SAMPLE_ELEMENTS,
     [ifcModel],
@@ -217,7 +246,10 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
   useEffect(() => {
     if (selectedId && !selected) clearSelection()
   }, [selected, selectedId, clearSelection])
-  useEffect(() => setTablePage(0), [ifcModel, metricFilters, activeView, kind, query])
+  useEffect(() => {
+    setTablePage(restoredTablePage.current ?? 0)
+    restoredTablePage.current = null
+  }, [ifcModel, metricFilters, activeView, kind, query])
   useEffect(() => setSectionBoxSelected(false), [activeView, metricFilters])
   useEffect(() => {
     const deselect = (event: KeyboardEvent) => {
@@ -261,7 +293,12 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
         },
       })
       if (controller.signal.aborted || importRequest.current?.token !== token) return
+      cameraGeneration.current += 1
       setIfcModel(model)
+      setSourceIfcFile(file)
+      setCurrentProject(null)
+      setCurrentProjectStored(false)
+      setCameraPose(null)
       setSectionBox(null)
       setSectionBoxSelected(false)
       setModelVersion((value) => value + 1)
@@ -296,7 +333,12 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
   }
   function restoreSample() {
     cancelImport()
+    cameraGeneration.current += 1
     setIfcModel(null)
+    setSourceIfcFile(null)
+    setCurrentProject(null)
+    setCurrentProjectStored(false)
+    setCameraPose(null)
     setSectionBox(null)
     setSectionBoxSelected(false)
     setModelVersion((value) => value + 1)
@@ -341,6 +383,89 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
   function selectInViewer(id: string) {
     setSelectedId(id)
     setSectionBoxSelected(false)
+  }
+
+  function projectSnapshot(): ProjectSnapshot {
+    if (!ifcModel || !sourceIfcFile) throw new Error('저장할 IFC 모델을 먼저 업로드해 주세요.')
+    return {
+      ifcFile: sourceIfcFile,
+      elementCount: ifcModel.elements.length,
+      business: business
+        ? {
+            fileName: business.fileName,
+            table: business.table,
+            modelKey: business.modelKey,
+            column: business.column,
+          }
+        : null,
+      workspace: {
+        activeView,
+        metricFilters,
+        kind,
+        query,
+        selectedId,
+        sectionBox,
+        camera: cameraCapture.current?.() ?? cameraPose,
+        tablePage: currentPage,
+      },
+    }
+  }
+
+  async function openProject(record: SavedProject, source: 'browser' | 'file' = 'browser') {
+    importRequest.current?.controller.abort()
+    const controller = new AbortController()
+    const token = ++importToken.current
+    importRequest.current = { controller, token }
+    setImportError('')
+    setImportNotice('')
+    setProgress({ percent: 0, message: '저장한 프로젝트의 IFC 모델을 불러옵니다.' })
+    try {
+      const snapshot = record.snapshot
+      const model = await loadIfcFile(snapshot.ifcFile, {
+        signal: controller.signal,
+        onProgress: (next) => {
+          if (importRequest.current?.token === token) setProgress(next)
+        },
+      })
+      if (controller.signal.aborted || importRequest.current?.token !== token)
+        throw new DOMException('프로젝트 불러오기를 취소했습니다.', 'AbortError')
+      const savedBusiness = snapshot.business
+      const restoredBusiness: BusinessConnection | null = savedBusiness
+        ? {
+            ...savedBusiness,
+            result: joinBusinessRows(model.elements, savedBusiness.table, {
+              modelKey: savedBusiness.modelKey,
+              column: savedBusiness.column,
+            }),
+          }
+        : null
+      // Prepare the complete model and join before replacing the current workspace.
+      cameraGeneration.current += 1
+      restoredTablePage.current = snapshot.workspace.tablePage
+      setIfcModel(model)
+      setSourceIfcFile(snapshot.ifcFile)
+      setBusiness(restoredBusiness)
+      setBusinessOpen(false)
+      setMetricFilters(snapshot.workspace.metricFilters)
+      setKind(snapshot.workspace.kind)
+      setQuery(snapshot.workspace.query)
+      setActiveView(snapshot.workspace.activeView)
+      setSelectedId(snapshot.workspace.selectedId)
+      setSectionBox(snapshot.workspace.sectionBox)
+      setSectionBoxSelected(false)
+      setCameraPose(snapshot.workspace.camera)
+      setCameraRestoreKey((value) => value + 1)
+      setModelVersion((value) => value + 1)
+      setResetKey((value) => value + 1)
+      setCurrentProject(summarizeProject(record))
+      setCurrentProjectStored(source === 'browser')
+      setImportNotice(`${record.name} 프로젝트를 열었습니다.`)
+    } finally {
+      if (importRequest.current?.token === token) {
+        importRequest.current = null
+        setProgress(null)
+      }
+    }
   }
 
   return (
@@ -485,6 +610,25 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
               </button>
             </div>
           </section>
+          <ProjectManager
+            available={ifcModel !== null && sourceIfcFile !== null}
+            disabled={progress !== null}
+            current={currentProject}
+            currentStored={currentProjectStored}
+            getSnapshot={projectSnapshot}
+            onOpened={openProject}
+            onSaved={(summary) => {
+              // A pending save may finish after another model replaces this workspace.
+              if (cameraGeneration.current !== modelVersion) return
+              setCurrentProject(summary)
+              setCurrentProjectStored(true)
+            }}
+            onDeleted={(id) => {
+              if (currentProject?.id === id) setCurrentProjectStored(false)
+            }}
+            onCancelOpen={cancelImport}
+            progress={progress}
+          />
           <input
             ref={ifcInput}
             type="file"
@@ -755,6 +899,10 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                               sectionBoxSelected={sectionBoxSelected}
                               onSectionBoxSelect={() => setSectionBoxSelected(true)}
                               onSectionBoxDeselect={clearSelection}
+                              cameraRestore={cameraPose}
+                              cameraRestoreKey={cameraRestoreKey}
+                              onCameraChange={reportCamera}
+                              cameraCapture={cameraCapture}
                             />
                           ) : (
                             <BuildingScene
@@ -1280,8 +1428,8 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
           )}
           {(ifcModel || business) && (
             <p className="ifc-session-note">
-              업로드한 모델과 업무 데이터는 이 페이지에서만 유지됩니다. 새로고침하거나 탭을 닫으면
-              다시 업로드해주세요.
+              프로젝트를 저장하면 모델과 업무 데이터, 현재 화면을 이 브라우저에서 다시 열 수
+              있습니다. 다른 브라우저에서는 내보낸 프로젝트 파일을 불러와주세요.
             </p>
           )}
           <footer className="footer">
