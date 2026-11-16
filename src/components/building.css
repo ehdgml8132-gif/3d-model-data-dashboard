@@ -105,9 +105,6 @@
   max-width: 620px;
   flex-wrap: wrap;
 }
-.building-app.has-ifc .building-model-grid {
-  align-items: start;
-}
 .building-app.has-ifc .building-detail {
   max-height: 800px;
   overflow: auto;
@@ -544,9 +541,23 @@
 .building-model-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
-  align-items: start;
+  align-items: stretch;
   gap: 20px;
   margin-bottom: 22px;
+}
+.building-model-grid > .building-analytics-note {
+  grid-column: 1 / -1;
+}
+@media (min-width: 761px) {
+  .building-app .building-model-grid > .building-detail {
+    /* Let the viewer and graphs size the row; long IFC properties scroll
+       inside the matching detail card instead of extending both columns. */
+    contain: size;
+    min-height: 0;
+    max-height: none;
+    align-self: stretch;
+    overflow: auto;
+  }
 }
 .building-viewer-column {
   display: flex;

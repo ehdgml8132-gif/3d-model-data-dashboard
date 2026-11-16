@@ -39,7 +39,7 @@ import { loadIfcFile } from '../ifc/client'
 import { MAX_IFC_FILE_BYTES } from '../ifc/limits'
 import type { IfcModel } from '../ifc/types'
 import BusinessDataPanel, { type BusinessConnection } from './BusinessDataPanel'
-import BuildingAnalytics from './BuildingAnalytics'
+import BuildingAnalytics, { BuildingAnalyticsNote } from './BuildingAnalytics'
 import SectionBoxControls, { fullSectionRanges } from './SectionBoxControls'
 import type { SectionBoxSettings } from '../lib/sectionBox'
 import { useSessionState } from '../lib/useSessionState'
@@ -718,7 +718,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                     />
                   )}
                 </article>
-                <BuildingAnalytics elements={floorElements} isIfc={ifcModel !== null} />
+                <BuildingAnalytics elements={floorElements} />
               </div>
               <article className="card building-detail" aria-label="선택한 부재 정보">
                 {selected ? (
@@ -901,6 +901,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                   </div>
                 )}
               </article>
+              <BuildingAnalyticsNote isIfc={ifcModel !== null} />
             </section>
           )}
           <section

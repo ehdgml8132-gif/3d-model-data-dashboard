@@ -22,7 +22,7 @@ type AnalyticsElement = {
   material: string
   volume: number | null
 }
-type Props = { elements: AnalyticsElement[]; isIfc?: boolean }
+type Props = { elements: AnalyticsElement[] }
 type FloorRow = {
   floor: string
   label: string
@@ -45,7 +45,7 @@ const volumeFormat = new Intl.NumberFormat('ko-KR', {
 })
 const floorLabel = (floor: string) => (/^[123]F$/.test(floor) ? `${floor[0]}층` : floor)
 
-export default function BuildingAnalytics({ elements, isIfc = false }: Props) {
+export default function BuildingAnalytics({ elements }: Props) {
   const titleId = useId()
   const [metric, setMetric] = useState<'volume' | 'count'>('volume')
   const [page, setPage] = useState(0)
@@ -331,14 +331,19 @@ export default function BuildingAnalytics({ elements, isIfc = false }: Props) {
           </p>
         )}
       </article>
-      <p className="building-analytics-note">
-        <Info size={13} />
-        <span>
-          층 필터 기준의 전체 부재를 집계합니다. 단면상자는 화면만 자르며 그래프의 물량은 바꾸지
-          않습니다.{' '}
-          {isIfc ? '체적은 Pset 체적·Volume 값입니다.' : '체적은 샘플 모형 치수로 계산한 값입니다.'}
-        </span>
-      </p>
     </section>
+  )
+}
+
+export function BuildingAnalyticsNote({ isIfc = false }: { isIfc?: boolean }) {
+  return (
+    <p className="building-analytics-note">
+      <Info size={13} />
+      <span>
+        층 필터 기준의 전체 부재를 집계합니다. 단면상자는 화면만 자르며 그래프의 물량은 바꾸지
+        않습니다.{' '}
+        {isIfc ? '체적은 Pset 체적·Volume 값입니다.' : '체적은 샘플 모형 치수로 계산한 값입니다.'}
+      </span>
+    </p>
   )
 }
