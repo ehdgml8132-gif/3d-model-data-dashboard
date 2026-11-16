@@ -46,6 +46,7 @@ import BuildingMetricFilter from './BuildingMetricFilter'
 import ProjectManager from './ProjectManager'
 import { joinBusinessRows } from '../lib/business'
 import { summarizeProject } from '../projects/storage'
+import { embeddedProjectToOpen, finishEmbeddedProject } from '../projects/standalone'
 import type {
   ProjectCamera,
   ProjectSnapshot,
@@ -467,6 +468,48 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
       }
     }
   }
+
+  useEffect(() => {
+    const embedded = embeddedProjectToOpen()
+    if (!embedded) return
+    let active = true
+    const controller = new AbortController()
+    const token = ++importToken.current
+    importRequest.current = { controller, token }
+    setProgress({ percent: 0, message: 'HTML에 담긴 프로젝트를 준비하고 있습니다.' })
+    void embedded
+      .then(async (record) => {
+        if (!active) return
+        if (controller.signal.aborted || importRequest.current?.token !== token) {
+          finishEmbeddedProject()
+          return
+        }
+        // Transfer ownership without aborting the completed decode. Real IFC
+        // parse failures must still reach the startup error message below.
+        importRequest.current = null
+        await openProject(record, 'file')
+        if (active) finishEmbeddedProject()
+      })
+      .catch((cause: unknown) => {
+        if (!active) return
+        finishEmbeddedProject()
+        if (controller.signal.aborted || (cause instanceof Error && cause.name === 'AbortError'))
+          return
+        setImportError(
+          cause instanceof Error ? cause.message : 'HTML의 프로젝트를 열지 못했습니다.',
+        )
+      })
+      .finally(() => {
+        if (active && importRequest.current?.token === token) {
+          importRequest.current = null
+          setProgress(null)
+        }
+      })
+    return () => {
+      active = false
+      if (importRequest.current?.token === token) controller.abort()
+    }
+  }, [])
 
   return (
     <div className={`app-shell building-app ${ifcModel ? 'has-ifc' : ''}`}>

@@ -21,7 +21,8 @@ import {
   summarizeProject,
   writeProject,
 } from '../projects/storage'
-import { decodeProjectFile, encodeProjectFile } from '../projects/codec'
+import { decodeProjectDocument } from '../projects/html'
+import { exportProjectHtml } from '../projects/standalone'
 import './project-manager.css'
 
 type Props = {
@@ -64,7 +65,7 @@ function downloadName(name: string) {
     .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
     .replace(/[. ]+$/g, '')
     .slice(0, 100)
-  return `${safe || '프로젝트'}.monospace`
+  return `${safe || '프로젝트'}.html`
 }
 
 export default function ProjectManager({
@@ -226,7 +227,7 @@ export default function ProjectManager({
     setNotice('')
     try {
       const record = buildProjectRecord(projectName, getSnapshot(), current ?? undefined)
-      const blob = await encodeProjectFile(record)
+      const blob = await exportProjectHtml(record)
       if (!mounted.current || token !== operation.current) return
       const url = URL.createObjectURL(blob)
       downloadUrls.current.add(url)
@@ -241,7 +242,7 @@ export default function ProjectManager({
         downloadUrls.current.delete(url)
       }, 30_000)
       setNotice(
-        `‘${record.name}’ 프로젝트 파일을 내려받았습니다. 현재 변경 내용이 파일에 포함됩니다.`,
+        `‘${record.name}’ HTML 파일을 내려받았습니다. 파일을 브라우저에서 열면 현재 화면이 복원됩니다.`,
       )
       closeModal()
     } catch (cause) {
@@ -310,7 +311,7 @@ export default function ProjectManager({
     if (!file || busy || disabled) return
     if (!modal) rememberFocus()
     setModal('open')
-    await openRecord(() => decodeProjectFile(file), 'file')
+    await openRecord(() => decodeProjectDocument(file), 'file')
   }
 
   async function removeProject(project: ProjectSummary) {
@@ -429,7 +430,7 @@ export default function ProjectManager({
         ref={fileInput}
         className="file-input"
         type="file"
-        accept=".monospace,application/octet-stream"
+        accept=".html,.htm,.monospace,text/html,application/octet-stream"
         aria-label="프로젝트 파일 선택"
         onChange={(event) => void importFile(event.target.files?.[0])}
       />
@@ -462,7 +463,7 @@ export default function ProjectManager({
             </div>
             <p className="modal-description project-modal-description">
               {nameAction === 'export'
-                ? '현재 IFC와 업무 데이터, 화면 상태를 하나의 프로젝트 파일로 내려받습니다.'
+                ? '현재 IFC와 업무 데이터, 화면 상태를 브라우저에서 바로 열 수 있는 HTML 파일로 내려받습니다.'
                 : nameAction === 'copy'
                   ? '현재 화면을 새 프로젝트로 저장합니다. 기존 저장본은 그대로 남습니다.'
                   : '현재 IFC와 업무 데이터, 화면 상태를 이 브라우저에 저장합니다.'}
@@ -555,7 +556,7 @@ export default function ProjectManager({
             >
               <Upload size={15} /> 프로젝트 파일 열기
             </button>
-            <span>.monospace · IFC와 연결 데이터 포함</span>
+            <span>.html · IFC와 연결 데이터 포함 · 기존 .monospace 파일도 열 수 있습니다.</span>
           </div>
           {error && (
             <p className="project-status" data-tone="error" role="alert">

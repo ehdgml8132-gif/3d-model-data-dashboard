@@ -3,9 +3,14 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+import { parseArgs } from 'node:util'
 
 // A downloadable, self-contained copy. The ordinary web build keeps lazy chunks.
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const { values } = parseArgs({
+  options: { 'template-only': { type: 'boolean', default: false }, 'out-dir': { type: 'string' } },
+})
+const outputDirectory = values['out-dir'] ? resolve(root, values['out-dir']) : join(root, 'dist')
 const csv = await readFile(join(root, 'public/sample-products.csv'))
 const favicon = await readFile(join(root, 'public/favicon.svg'))
 const csvUrl = `data:text/csv;charset=utf-8;base64,${csv.toString('base64')}`
@@ -119,13 +124,10 @@ let html = asText(htmlAsset.source)
 // Escaping protects the HTML parser even if a future dependency contains this text.
 const javascript = entry.code.replace(/<\/script/gi, '<\\/script')
 const css = cssAssets.map((asset) => asText(asset.source)).join('\n')
-html = html.replace(
-  /<script\b[^>]*\bsrc="[^\"]+"[^>]*><\/script>/,
-  () => `<script type="module">${javascript}</script>`,
-)
+html = html.replace(/<html([^>]*)>/i, '<html$1 data-monospace-standalone="1">')
 html = html.replace(/<link\b[^>]*\brel="stylesheet"[^>]*>/g, '')
 html = html.replace(/<link\b[^>]*\brel="icon"[^>]*>/, `<link rel="icon" href="${faviconUrl}" />`)
-html = html.replace('</head>', () => `<style>${css}</style>\n</head>`)
+html = html.replace('</head>', () => `<style id="monospace-styles">${css}</style>\n</head>`)
 html = html.replace(
   '</head>',
   '<meta name="web-ifc-source" content="https://github.com/ThatOpen/engine_web-ifc; version 0.0.78; MPL-2.0" />\n</head>',
@@ -135,24 +137,55 @@ html = html.replace(
   () =>
     `<script type="text/plain" id="web-ifc-license">${engineLicense.replace(/<\/script/gi, '<\\/script')}</script>\n</body>`,
 )
+
+// Complete every document transform before embedding code. Runtime strings can
+// themselves contain </head>, </body>, <html> and <title> markup for re-export.
+const buildingDocument = html
+  .replace(/<html([^>]*)>/i, '<html$1 data-sample="building">')
+  .replace(/<title>[^<]*<\/title>/, '<title>모노 스페이스 · 건물 모델 대시보드</title>')
+const inlineApp = (document) =>
+  document.replace(
+    /<script\b[^>]*\bsrc="[^\"]+"[^>]*><\/script>/,
+    () => `<script id="monospace-app" type="module">${javascript}</script>`,
+  )
+html = inlineApp(html)
+const buildingHtml = inlineApp(buildingDocument)
+
+// Runtime HTML strings must stay inside the app script. Check the final script
+// body and document markers so future transform-order regressions fail builds.
+for (const document of [html, buildingHtml]) {
+  let application
+  const scaffold = document.replace(
+    /<script\b([^>]*)>([\s\S]*?)<\/script>/gi,
+    (_script, attributes, code) => {
+      if (/\bid="monospace-app"/.test(attributes)) application = code
+      return `<script${attributes}></script>`
+    },
+  )
+  if (
+    application !== javascript ||
+    !scaffold.includes('<style id="monospace-styles">') ||
+    !scaffold.includes('id="web-ifc-license"')
+  )
+    throw new Error('The standalone app script or document assets were corrupted during embedding.')
+}
 if (html.includes('/sample-products.csv') || /(?:src|href)="(?:\.\/)?assets\//.test(html)) {
   throw new Error('A local asset reference remains in the standalone preview.')
 }
 if (!html.includes(csvUrl))
   throw new Error('The sample CSV is missing from the standalone preview.')
 
-const destination = join(root, 'dist/monospace-preview.html')
-await mkdir(dirname(destination), { recursive: true })
-await writeFile(destination, html)
-console.log(
-  `Standalone preview: ${destination} (${(Buffer.byteLength(html) / 1024 / 1024).toFixed(2)} MB)`,
-)
+await mkdir(outputDirectory, { recursive: true })
+if (!values['template-only']) {
+  const destination = join(outputDirectory, 'monospace-preview.html')
+  await writeFile(destination, html)
+  console.log(
+    `Standalone preview: ${destination} (${(Buffer.byteLength(html) / 1024 / 1024).toFixed(2)} MB)`,
+  )
+}
 
 // The same app can start with the building example, while preserving the café
 // as the default in the original artifact. Both files include the sample switch.
-const buildingHtml = html
-  .replace(/<html([^>]*)>/i, '<html$1 data-sample="building">')
-  .replace(/<title>[^<]*<\/title>/, '<title>모노 스페이스 · 건물 모델 대시보드</title>')
-const buildingDestination = join(root, 'dist/monospace-building-preview.html')
+const buildingDestination = join(outputDirectory, 'monospace-building-preview.html')
 await writeFile(buildingDestination, buildingHtml)
 console.log(`Building preview: ${buildingDestination}`)

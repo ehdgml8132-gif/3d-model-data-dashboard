@@ -3,11 +3,18 @@ import { access, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// Package only the regular web build. Downloadable single-file previews and
-// other archives in dist are deliberately excluded from the deployed site.
+// Include the standalone building template used by project HTML exports.
+// Other previews and archives in dist are deliberately excluded.
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = join(root, 'dist')
-for (const name of ['index.html', 'assets', 'ifc', 'favicon.svg', 'sample-products.csv']) {
+for (const name of [
+  'index.html',
+  'assets',
+  'ifc',
+  'favicon.svg',
+  'sample-products.csv',
+  'monospace-building-preview.html',
+]) {
   await access(join(output, name))
 }
 
@@ -19,7 +26,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 
 root = Path(sys.argv[1]).resolve()
 destination = Path(sys.argv[2]).resolve()
-files = [root / name for name in ('index.html', 'favicon.svg', 'sample-products.csv', 'THIRD_PARTY.md') if (root / name).exists()]
+files = [root / name for name in ('index.html', 'favicon.svg', 'sample-products.csv', 'THIRD_PARTY.md', 'monospace-building-preview.html') if (root / name).exists()]
 for directory in ('assets', 'ifc', 'examples'):
     if (root / directory).exists():
         files.extend(sorted((root / directory).rglob('*')))

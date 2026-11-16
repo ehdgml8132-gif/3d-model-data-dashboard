@@ -1,5 +1,6 @@
-import { expect, test, type Page } from '@playwright/test'
-import { readFile } from 'node:fs/promises'
+import { expect, test, type Page, type TestInfo } from '@playwright/test'
+import { readFile, writeFile } from 'node:fs/promises'
+import { pathToFileURL } from 'node:url'
 import type { ProjectCamera, SavedProject } from '../src/projects/types'
 
 const fixture = new URL('../public/examples/authored-building.ifc', import.meta.url)
@@ -33,13 +34,17 @@ async function importIfc(page: Page) {
   await expect(page.getByRole('button', { name: '업로드 취소', exact: true })).toHaveCount(0)
 }
 
-async function connectBusiness(page: Page) {
+async function connectBusiness(page: Page, note?: string) {
   await page.getByRole('button', { name: '업무 데이터 연결', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '업무 데이터 연결', exact: true })
   await dialog.getByLabel('업무 데이터 파일 선택', { exact: true }).setInputFiles({
     name: 'authored-building-data.csv',
     mimeType: 'text/csv',
-    buffer: await readFile(businessFixture),
+    buffer: note
+      ? Buffer.from(
+          (await readFile(businessFixture, 'utf8')).replace('Self-authored fixture', note),
+        )
+      : await readFile(businessFixture),
   })
   await dialog.getByLabel('모델 연결 키', { exact: true }).selectOption('globalId')
   await dialog.getByLabel('데이터 연결 열', { exact: true }).selectOption('GlobalId')
@@ -125,6 +130,63 @@ async function savedCamera(page: Page, name: string): Promise<ProjectCamera> {
   return pose!
 }
 
+function exportedBinary(html: Buffer): Buffer {
+  const payload = html
+    .toString('utf8')
+    .match(/<script\b[^>]*\bid="monospace-project"[^>]*>([A-Za-z0-9+/=\r\n]+)<\/script>/)
+  expect(payload, 'HTML includes its portable project payload').not.toBeNull()
+  const binary = Buffer.from(payload![1], 'base64')
+  expect(binary.subarray(0, 8).toString('ascii')).toBe('MONOPRJ1')
+  return binary
+}
+
+function exportedWorkspace(html: Buffer): SavedProject['snapshot']['workspace'] {
+  const binary = exportedBinary(html)
+  const metadataLength = binary.readUInt32LE(8)
+  return (JSON.parse(binary.subarray(12, 12 + metadataLength).toString('utf8')) as SavedProject)
+    .snapshot.workspace
+}
+
+function expectCameraRestored(restored: ProjectCamera, original: ProjectCamera) {
+  restored.position.forEach((value, index) =>
+    expect(value).toBeCloseTo(original.position[index], 5),
+  )
+  restored.target.forEach((value, index) => expect(value).toBeCloseTo(original.target[index], 5))
+  const viewportScale = Math.min(
+    restored.viewport[0] / original.viewport[0],
+    restored.viewport[1] / original.viewport[1],
+  )
+  expect(restored.zoom).toBeCloseTo(original.zoom * viewportScale, 5)
+}
+
+async function openDownloadedHtml(page: Page, path: string, testInfo: TestInfo) {
+  try {
+    await page.goto(pathToFileURL(path).href)
+    return page
+  } catch (cause) {
+    if (!(cause instanceof Error) || !cause.message.includes('ERR_BLOCKED_BY_ADMINISTRATOR'))
+      throw cause
+    // Managed Chromium can prohibit every file:// navigation. An offline Blob
+    // document still executes the exact downloaded bytes with an opaque origin;
+    // no browser policies or launch restrictions are changed for this fallback.
+    if (!testInfo.annotations.some((item) => item.type === 'managed-file-policy'))
+      testInfo.annotations.push({
+        type: 'managed-file-policy',
+        description:
+          'file:// prohibited; downloaded HTML rendered offline with an opaque Blob origin.',
+      })
+    const blank = await page.context().newPage()
+    await page.close()
+    const url = await blank.evaluate(
+      (html) => URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' })),
+      await readFile(path, 'utf8'),
+    )
+    await blank.goto(url)
+    expect(await blank.evaluate(() => location.origin)).toBe('null')
+    return blank
+  }
+}
+
 test('named browser projects survive reload and Save As keeps independent workspace copies', async ({
   page,
 }) => {
@@ -202,7 +264,7 @@ test('named browser projects survive reload and Save As keeps independent worksp
   )
 })
 
-test('portable projects restore IFC and linked data in a fresh mobile browser and reject corrupt files', async ({
+test('HTML project files restore IFC and linked data in a fresh mobile browser and reject corrupt files', async ({
   page,
   browser,
 }) => {
@@ -211,15 +273,15 @@ test('portable projects restore IFC and linked data in a fresh mobile browser an
   await connectBusiness(page)
   await selectColumn(page)
   await showData(page, columnName)
-  const downloadPromise = page.waitForEvent('download')
+  const downloadPromise = page.waitForEvent('download', { timeout: 60_000 })
   await toolbar(page).getByRole('button', { name: '파일로 내보내기', exact: true }).click()
   const exportDialog = page.getByRole('dialog', { name: '프로젝트 파일 내보내기', exact: true })
   await exportDialog.getByRole('textbox', { name: '프로젝트 이름', exact: true }).fill('이동 현장')
   await exportDialog.getByRole('button', { name: '내보내기', exact: true }).click()
   const download = await downloadPromise
-  expect(download.suggestedFilename()).toMatch(/\.monospace$/)
+  expect(download.suggestedFilename()).toMatch(/\.html$/)
   const portableFile = await readFile((await download.path())!)
-  expect(portableFile.subarray(0, 8).toString('ascii')).toBe('MONOPRJ1')
+  expect(portableFile.toString('utf8')).toMatch(/<!doctype html>/i)
 
   // This context has no IndexedDB records from the original browser.
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 } })
@@ -231,8 +293,12 @@ test('portable projects restore IFC and linked data in a fresh mobile browser an
     await expect(list.getByText('저장한 프로젝트가 없습니다.', { exact: true })).toBeVisible()
     await restored.getByLabel('프로젝트 파일 선택', { exact: true }).setInputFiles({
       name: download.suggestedFilename(),
-      mimeType: 'application/octet-stream',
-      buffer: portableFile,
+      mimeType: 'text/html',
+      buffer: Buffer.from(
+        portableFile
+          .toString('utf8')
+          .replace('</head>', '<script>window.__projectScriptRan=3</script></head>'),
+      ),
     })
     await expect(list).toHaveCount(0, { timeout: 45_000 })
     await expect(restored.getByRole('textbox', { name: '부재 검색', exact: true })).toHaveValue(
@@ -242,6 +308,11 @@ test('portable projects restore IFC and linked data in a fresh mobile browser an
     await menu(restored).getByRole('button', { name: '공간 데이터', exact: true }).click()
     await expectColumnBusiness(restored)
     await expect(restored.getByLabel('IFC 모델 3D 뷰어', { exact: true })).toBeVisible()
+    expect(
+      await restored.evaluate(
+        () => (window as Window & { __projectScriptRan?: number }).__projectScriptRan,
+      ),
+    ).toBeUndefined()
 
     list = await projectList(restored)
     // Importing a portable file does not claim a browser save has occurred.
@@ -278,8 +349,152 @@ test('portable projects restore IFC and linked data in a fresh mobile browser an
     await nameDialog.getByRole('button', { name: '저장', exact: true }).click()
     await expect(nameDialog).toHaveCount(0)
     await expect(restored.getByTestId('current-project-name')).toHaveText('가져온 현장')
+
+    // HTML replaces the download format; existing binary project files still
+    // import through the same picker without being interpreted as executable HTML.
+    list = await projectList(restored)
+    await restored.getByLabel('프로젝트 파일 선택', { exact: true }).setInputFiles({
+      name: 'legacy.monospace',
+      mimeType: 'application/octet-stream',
+      buffer: exportedBinary(portableFile),
+    })
+    await expect(list).toHaveCount(0, { timeout: 45_000 })
+    await expect(restored.getByTestId('current-project-name')).toHaveText('이동 현장')
+    await menu(restored).getByRole('button', { name: '공간 데이터', exact: true }).click()
+    await expectColumnBusiness(restored)
   } finally {
     await mobile.close()
+  }
+})
+
+test('downloaded HTML opens and re-exports offline with the saved model, data, filters and camera', async ({
+  page,
+  browser,
+}, testInfo) => {
+  const projectName = '현장 </title><script>window.__projectScriptRan=1</script>'
+  const note =
+    '</script><script>window.__projectScriptRan=2</script><!-- 한글 & <b>값</b> \u2028\u2029'
+  await openBuilding(page)
+  await importIfc(page)
+  await connectBusiness(page, note)
+  await selectColumn(page)
+  await page.getByRole('checkbox', { name: '단면상자', exact: true }).check()
+  const canvas = page.getByLabel('IFC 모델 3D 뷰어', { exact: true })
+  await canvas.focus()
+  await canvas.press('Enter')
+  const topFace = page.getByRole('button', { name: 'Y 최대 단면 이동', exact: true })
+  await topFace.press('End')
+  await topFace.press('Shift+ArrowDown')
+  await expect(topFace.locator('.section-face-value')).toHaveText('90%')
+  await page
+    .getByRole('group', { name: '건물 층 선택' })
+    .getByRole('button', { name: 'Ground floor', exact: true })
+    .click()
+  const bounds = (await canvas.boundingBox())!
+  await page.mouse.move(bounds.x + bounds.width * 0.5, bounds.y + bounds.height * 0.5)
+  await page.mouse.down({ button: 'right' })
+  await page.mouse.move(bounds.x + bounds.width * 0.57, bounds.y + bounds.height * 0.53, {
+    steps: 8,
+  })
+  await page.mouse.up({ button: 'right' })
+  await page.mouse.wheel(0, -200)
+  const savedMin = await canvas.getAttribute('data-section-min')
+  const savedMax = await canvas.getAttribute('data-section-max')
+  await showData(page, columnName)
+
+  const downloadPromise = page.waitForEvent('download', { timeout: 60_000 })
+  await toolbar(page).getByRole('button', { name: '파일로 내보내기', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '프로젝트 파일 내보내기', exact: true })
+  await dialog.getByRole('textbox', { name: '프로젝트 이름', exact: true }).fill(projectName)
+  await dialog.getByRole('button', { name: '내보내기', exact: true }).click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toMatch(/\.html$/)
+  const path = testInfo.outputPath('exported-project.html')
+  await download.saveAs(path)
+  const originalWorkspace = exportedWorkspace(await readFile(path))
+  expect(originalWorkspace.camera).not.toBeNull()
+
+  const offline = await browser.newContext({
+    viewport: { width: 1440, height: 1080 },
+    offline: true,
+  })
+  try {
+    const networkRequests: string[] = []
+    const errors: string[] = []
+    offline.on('request', (request) => {
+      if (/^https?:/i.test(request.url())) networkRequests.push(request.url())
+    })
+    offline.on('page', (opened) => opened.on('pageerror', (error) => errors.push(error.message)))
+    let local = await openDownloadedHtml(await offline.newPage(), path, testInfo)
+    await expect(local.getByTestId('current-project-name')).toHaveText(projectName, {
+      timeout: 45_000,
+    })
+    await expect(local.getByRole('textbox', { name: '부재 검색', exact: true })).toHaveValue(
+      columnName,
+    )
+    await expect(local.getByLabel('부재 종류', { exact: true })).toHaveValue('column')
+    await expect(members(local).locator('tbody tr')).toHaveCount(1)
+    await expect(
+      local
+        .getByRole('group', { name: '건물 층 선택' })
+        .getByRole('button', { name: 'Ground floor', exact: true }),
+    ).toHaveAttribute('aria-pressed', 'true')
+    await menu(local).getByRole('button', { name: '공간 데이터', exact: true }).click()
+    await expectColumnBusiness(local)
+    await expect(detail(local)).toContainText(note)
+    await expect(local.getByRole('checkbox', { name: '단면상자', exact: true })).toBeChecked()
+    const localCanvas = local.getByLabel('IFC 모델 3D 뷰어', { exact: true })
+    await expect(localCanvas).toHaveAttribute('data-section-min', savedMin!)
+    await expect(localCanvas).toHaveAttribute('data-section-max', savedMax!)
+    expect(
+      await local.evaluate(
+        () => (window as Window & { __projectScriptRan?: number }).__projectScriptRan,
+      ),
+    ).toBeUndefined()
+    await local.screenshot({ path: '/tmp/monospace-project-html-offline.png', fullPage: false })
+
+    // Exporting from the downloaded copy must reuse its embedded viewer, and
+    // include the changed spatial view rather than reopening the original data view.
+    const secondDownloadPromise = local.waitForEvent('download', { timeout: 60_000 })
+    await toolbar(local).getByRole('button', { name: '파일로 내보내기', exact: true }).click()
+    const secondDownload = await secondDownloadPromise
+    expect(secondDownload.suggestedFilename()).toMatch(/\.html$/)
+    const secondPath = testInfo.outputPath('re-exported-project.html')
+    await secondDownload.saveAs(secondPath)
+    const reexported = exportedWorkspace(await readFile(secondPath))
+    expect(reexported.activeView).toBe('space')
+    expect(reexported.camera).not.toBeNull()
+    expectCameraRestored(reexported.camera!, originalWorkspace.camera!)
+    local = await openDownloadedHtml(local, secondPath, testInfo)
+    await expect(local.getByTestId('current-project-name')).toHaveText(projectName, {
+      timeout: 45_000,
+    })
+    await expectColumnBusiness(local)
+    await expect(detail(local)).toContainText(note)
+    await expect(local.getByLabel('IFC 모델 3D 뷰어', { exact: true })).toBeVisible()
+
+    // Keep the HTML and metadata valid while corrupting just the IFC bytes.
+    // Startup must surface the model error rather than silently show the sample.
+    const html = await readFile(secondPath, 'utf8')
+    const invalidBinary = exportedBinary(Buffer.from(html))
+    invalidBinary.fill(0x21, 12 + invalidBinary.readUInt32LE(8))
+    const invalidPath = testInfo.outputPath('invalid-model-project.html')
+    await writeFile(
+      invalidPath,
+      html.replace(
+        /(<script\b[^>]*\bid="monospace-project"[^>]*>)[A-Za-z0-9+/=\r\n]+(<\/script>)/,
+        (_, start: string, end: string) => `${start}${invalidBinary.toString('base64')}${end}`,
+      ),
+    )
+    local = await openDownloadedHtml(local, invalidPath, testInfo)
+    await expect(local.getByRole('alert')).toContainText('유효한 IFC STEP 파일이 아닙니다.', {
+      timeout: 45_000,
+    })
+    await expect(local.getByTestId('current-project-name')).toHaveText('저장되지 않은 프로젝트')
+    expect(networkRequests).toEqual([])
+    expect(errors).toEqual([])
+  } finally {
+    await offline.close()
   }
 })
 
@@ -306,9 +521,9 @@ test('a quota error aborts the whole overwrite and leaves the previous browser p
     'unsaved revision',
   )
   // A storage failure still allows a portable backup of the current revision.
-  const downloadPromise = page.waitForEvent('download')
+  const downloadPromise = page.waitForEvent('download', { timeout: 60_000 })
   await toolbar(page).getByRole('button', { name: '파일로 내보내기', exact: true }).click()
-  expect((await downloadPromise).suggestedFilename()).toMatch(/\.monospace$/)
+  expect((await downloadPromise).suggestedFilename()).toMatch(/\.html$/)
   // Reload also removes the injected failure. The saved IFC must still parse.
   await page.reload()
   await openSaved(page, '저장 공간 검증')

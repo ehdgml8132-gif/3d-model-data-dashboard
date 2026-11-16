@@ -1,11 +1,12 @@
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { ifcAssets } from './scripts/ifc-assets'
+import { projectHtmlTemplate } from './scripts/project-html-template'
 
 export default defineConfig({
   // Relative assets work at both a custom domain root and a project subpath.
   base: './',
-  plugins: [react(), ifcAssets()],
+  plugins: [react(), ifcAssets(), projectHtmlTemplate()],
   // Discover lazily used parsers before the first upload, so development does
   // not reload the page and discard a file being read by the worker.
   optimizeDeps: { include: ['web-ifc', 'exceljs', 'fflate'] },
