@@ -22,6 +22,7 @@ import {
   LoaderCircle,
   MousePointer2,
   RotateCcw,
+  Scan,
   Search,
   Shapes,
   SlidersHorizontal,
@@ -40,8 +41,7 @@ import { MAX_IFC_FILE_BYTES } from '../ifc/limits'
 import type { IfcModel } from '../ifc/types'
 import BusinessDataPanel, { type BusinessConnection } from './BusinessDataPanel'
 import BuildingAnalytics, { BuildingAnalyticsNote } from './BuildingAnalytics'
-import SectionBoxControls, { fullSectionRanges } from './SectionBoxControls'
-import type { SectionBoxSettings } from '../lib/sectionBox'
+import { fullSectionRanges, type SectionBoxSettings } from '../lib/sectionBox'
 import { useSessionState } from '../lib/useSessionState'
 import './building.css'
 
@@ -141,6 +141,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
     'building:section-box',
     null,
   )
+  const [sectionBoxSelected, setSectionBoxSelected] = useState(false)
   const [resetKey, setResetKey] = useState(0)
   const [ifcModel, setIfcModel] = useSessionState<IfcModel | null>('building:model', null)
   const [modelVersion, setModelVersion] = useState(0)
@@ -192,6 +193,15 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
     if (selected && selected.id !== selectedId) setSelectedId(selected.id)
   }, [selected, selectedId])
   useEffect(() => setTablePage(0), [ifcModel, floor, activeView, kind, query])
+  useEffect(() => setSectionBoxSelected(false), [activeView])
+  useEffect(() => {
+    if (!sectionBoxSelected) return
+    const deselect = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSectionBoxSelected(false)
+    }
+    window.addEventListener('keydown', deselect, true)
+    return () => window.removeEventListener('keydown', deselect, true)
+  }, [sectionBoxSelected])
   useEffect(
     () => () => {
       importRequest.current?.controller.abort()
@@ -229,6 +239,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
       if (controller.signal.aborted || importRequest.current?.token !== token) return
       setIfcModel(model)
       setSectionBox(null)
+      setSectionBoxSelected(false)
       setModelVersion((value) => value + 1)
       setBusiness(null)
       setBusinessOpen(false)
@@ -263,6 +274,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
     cancelImport()
     setIfcModel(null)
     setSectionBox(null)
+    setSectionBoxSelected(false)
     setModelVersion((value) => value + 1)
     setBusiness(null)
     setBusinessOpen(false)
@@ -298,7 +310,13 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
   }
   function selectElement(id: string) {
     setSelectedId(id)
+    setSectionBoxSelected(false)
     setActiveView('space')
+  }
+
+  function selectInViewer(id: string) {
+    setSelectedId(id)
+    setSectionBoxSelected(false)
   }
 
   return (
@@ -613,8 +631,11 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                         type="button"
                         className="building-clear-selection"
                         aria-label="선택 해제"
-                        disabled={!selected}
-                        onClick={() => setSelectedId('')}
+                        disabled={!selected && !sectionBoxSelected}
+                        onClick={() => {
+                          setSelectedId('')
+                          setSectionBoxSelected(false)
+                        }}
                       >
                         <X size={13} /> 선택 해제
                       </button>
@@ -622,16 +643,30 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                         <input
                           type="checkbox"
                           checked={sectionBox !== null}
-                          onChange={(event) =>
+                          onChange={(event) => {
+                            setSectionBoxSelected(false)
                             setSectionBox(
                               event.target.checked
                                 ? { targetId: selected?.id ?? null, ranges: fullSectionRanges() }
                                 : null,
                             )
-                          }
+                          }}
                         />
                         단면상자
                       </label>
+                      {sectionBox && (
+                        <button
+                          type="button"
+                          className="icon-button reset-view"
+                          title="단면 범위 초기화"
+                          aria-label="단면 범위 초기화"
+                          onClick={() =>
+                            setSectionBox({ ...sectionBox, ranges: fullSectionRanges() })
+                          }
+                        >
+                          <Scan size={14} />
+                        </button>
+                      )}
                       <button
                         className="icon-button reset-view"
                         title="시점 초기화"
@@ -663,20 +698,26 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                               model={ifcModel}
                               visibleIds={visibleIfcIds}
                               selectedId={selected?.id ?? ''}
-                              onSelect={setSelectedId}
+                              onSelect={selectInViewer}
                               resetKey={resetKey}
                               sectionBox={sectionBox}
                               onSectionBoxChange={setSectionBox}
+                              sectionBoxSelected={sectionBoxSelected}
+                              onSectionBoxSelect={() => setSectionBoxSelected(true)}
+                              onSectionBoxDeselect={() => setSectionBoxSelected(false)}
                             />
                           ) : (
                             <BuildingScene
                               elements={sampleVisible}
                               selectedId={selected?.id ?? ''}
-                              onSelect={setSelectedId}
+                              onSelect={selectInViewer}
                               floor={sampleFloor}
                               resetKey={resetKey}
                               sectionBox={sectionBox}
                               onSectionBoxChange={setSectionBox}
+                              sectionBoxSelected={sectionBoxSelected}
+                              onSectionBoxSelect={() => setSectionBoxSelected(true)}
+                              onSectionBoxDeselect={() => setSectionBoxSelected(false)}
                             />
                           )}
                         </Suspense>
@@ -695,7 +736,9 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                       <MousePointer2 size={13} />
                       <span>
                         {sectionBox
-                          ? '화살표 드래그로 단면 조절 · 빈 곳 드래그로 회전'
+                          ? sectionBoxSelected
+                            ? '화살표 드래그로 단면 조절 · 빈 곳 클릭으로 선택 해제'
+                            : '단면상자 윤곽선을 클릭하면 조절 화살표가 나타납니다'
                           : '부재 클릭 · 드래그하여 회전 · 스크롤로 확대'}
                       </span>
                     </div>
@@ -714,15 +757,6 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                       선택한 부재
                     </span>
                   </div>
-                  {sectionBox && (
-                    <SectionBoxControls
-                      settings={sectionBox}
-                      targetName={
-                        elements.find((element) => element.id === sectionBox.targetId)?.name
-                      }
-                      onChange={setSectionBox}
-                    />
-                  )}
                 </article>
                 <BuildingAnalytics elements={floorElements} />
               </div>

@@ -21,6 +21,9 @@ type Props = {
   resetKey: number
   sectionBox?: SectionBoxSettings | null
   onSectionBoxChange?: (settings: SectionBoxSettings) => void
+  sectionBoxSelected?: boolean
+  onSectionBoxSelect?: () => void
+  onSectionBoxDeselect?: () => void
 }
 
 type PlacedMesh = {
@@ -169,6 +172,8 @@ function ModelContents({
   resetKey,
   sectionBox,
   onSectionBoxChange,
+  sectionBoxSelected,
+  onSectionBoxSelect,
 }: Props) {
   const prepared = useMemo(() => prepareModel(model), [model])
   const visibilityKey = visibleIds.join('\u0000')
@@ -227,8 +232,12 @@ function ModelContents({
         />
       ))}
       <FrameBoxCamera bounds={sectionBase ?? visibleBounds} resetKey={resetKey} />
-      <SectionBoxVisual bounds={clipBounds} />
-      {sectionBase && clipBounds && sectionBox && onSectionBoxChange && (
+      <SectionBoxVisual
+        bounds={clipBounds}
+        selected={sectionBoxSelected}
+        onSelect={onSectionBoxSelect}
+      />
+      {sectionBoxSelected && sectionBase && clipBounds && sectionBox && onSectionBoxChange && (
         <SectionBoxHandles
           baseBounds={sectionBase}
           bounds={clipBounds}
@@ -247,6 +256,7 @@ export default function IfcScene(props: Props) {
       dpr={[1, 1.6]}
       camera={{ position: [10, 10, 10], zoom: 1, near: 0.001, far: 1000 }}
       gl={{ antialias: true, alpha: true }}
+      onPointerMissed={props.onSectionBoxDeselect}
       onCreated={({ gl }) => {
         gl.localClippingEnabled = true
         gl.domElement.setAttribute('aria-label', 'IFC 모델 3D 뷰어')

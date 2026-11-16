@@ -22,6 +22,9 @@ type Props = {
   resetKey: number
   sectionBox?: SectionBoxSettings | null
   onSectionBoxChange?: (settings: SectionBoxSettings) => void
+  sectionBoxSelected?: boolean
+  onSectionBoxSelect?: () => void
+  onSectionBoxDeselect?: () => void
 }
 
 const COLORS = { column: '#e2d9c7', beam: '#bc9f78', slab: '#95b5bd', wall: '#d2d6ca' }
@@ -184,6 +187,9 @@ export default function BuildingScene({
   resetKey,
   sectionBox,
   onSectionBoxChange,
+  sectionBoxSelected,
+  onSectionBoxSelect,
+  onSectionBoxDeselect,
 }: Props) {
   const visible = filterBuildingElements(elements, floor)
   const base = floor === 'all' ? 0 : (Number.parseInt(floor) - 1) * 3.2
@@ -204,6 +210,7 @@ export default function BuildingScene({
       dpr={[1, 1.6]}
       camera={{ position: [14, 16.4, 16], zoom: 28, near: 0.1, far: 120 }}
       gl={{ antialias: true, alpha: true }}
+      onPointerMissed={onSectionBoxDeselect}
       onCreated={({ gl }) => {
         gl.localClippingEnabled = true
         gl.domElement.setAttribute('aria-label', '건물 모델 3D 뷰어')
@@ -282,8 +289,12 @@ export default function BuildingScene({
       ) : (
         <FrameCamera floor={floor} resetKey={resetKey} />
       )}
-      <SectionBoxVisual bounds={clipBounds} />
-      {sectionBase && clipBounds && sectionBox && onSectionBoxChange && (
+      <SectionBoxVisual
+        bounds={clipBounds}
+        selected={sectionBoxSelected}
+        onSelect={onSectionBoxSelect}
+      />
+      {sectionBoxSelected && sectionBase && clipBounds && sectionBox && onSectionBoxChange && (
         <SectionBoxHandles
           baseBounds={sectionBase}
           bounds={clipBounds}

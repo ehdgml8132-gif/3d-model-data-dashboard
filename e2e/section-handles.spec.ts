@@ -1,21 +1,106 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
+import { Box3, OrthographicCamera, Vector3 } from 'three'
 
 test.describe.configure({ mode: 'default' })
 test.setTimeout(90_000)
 
 type Direction = { x: number; y: number }
+type Bounds = { min: number[]; max: number[] }
 
 const handle = (page: Page, axis: string, side: '최소' | '최대') =>
   page.getByRole('button', { name: `${axis} ${side} 단면 이동`, exact: true })
-const slider = (page: Page, axis: string, side: '최소' | '최대') =>
-  page.getByRole('slider', { name: `${axis} ${side}`, exact: true })
 const details = (page: Page) => page.getByRole('article', { name: '선택한 부재 정보', exact: true })
 const members = (page: Page) => page.getByRole('article', { name: '부재 목록', exact: true })
 
 async function openBuilding(page: Page) {
   await page.goto('http://127.0.0.1:5173/?sample=building')
   await expect(page.getByLabel('건물 모델 3D 뷰어', { exact: true })).toBeVisible()
+}
+
+async function boundsOf(page: Page): Promise<Bounds> {
+  const canvas = page.locator('canvas')
+  await expect(canvas).toHaveAttribute('data-section-box', 'true')
+  return {
+    min: JSON.parse((await canvas.getAttribute('data-section-min'))!),
+    max: JSON.parse((await canvas.getAttribute('data-section-max'))!),
+  }
+}
+
+async function selectBox(page: Page, base: Bounds, touch = false) {
+  const canvas = page.locator('canvas')
+  const viewport = (await canvas.boundingBox())!
+  const initial = new Box3(new Vector3().fromArray(base.min), new Vector3().fromArray(base.max))
+  const camera = new OrthographicCamera(
+    -viewport.width / 2,
+    viewport.width / 2,
+    viewport.height / 2,
+    -viewport.height / 2,
+    0.00001,
+    10000,
+  )
+  const center = initial.getCenter(new Vector3())
+  const diameter = initial.getSize(new Vector3()).length()
+  camera.position.copy(center).addScaledVector(new Vector3(1, 0.85, 1).normalize(), diameter * 1.5)
+  camera.lookAt(center)
+  camera.updateMatrixWorld(true)
+  const projected = new Box3()
+  for (const x of [base.min[0], base.max[0]])
+    for (const y of [base.min[1], base.max[1]])
+      for (const z of [base.min[2], base.max[2]])
+        projected.expandByPoint(new Vector3(x, y, z).applyMatrix4(camera.matrixWorldInverse))
+  const extent = projected.getSize(new Vector3())
+  camera.zoom = Math.min(
+    viewport.width / (Math.max(extent.x, diameter * 0.01) * 1.22),
+    viewport.height / (Math.max(extent.y, diameter * 0.01) * 1.22),
+  )
+  camera.updateProjectionMatrix()
+  const current = await boundsOf(page)
+  const points: { x: number; y: number }[] = []
+  for (let axis = 0; axis < 3; axis++) {
+    const other = [0, 1, 2].filter((value) => value !== axis)
+    for (const first of [0, 1])
+      for (const second of [0, 1]) {
+        const coordinates = current.min.map((value, index) => (value + current.max[index]) / 2)
+        coordinates[other[0]] = (first ? current.max : current.min)[other[0]]
+        coordinates[other[1]] = (second ? current.max : current.min)[other[1]]
+        const point = new Vector3().fromArray(coordinates).project(camera)
+        points.push({
+          x: ((point.x + 1) * viewport.width) / 2,
+          y: ((1 - point.y) * viewport.height) / 2,
+        })
+      }
+  }
+  const point = points
+    .filter(
+      (point) =>
+        point.x > 12 &&
+        point.y > 12 &&
+        point.x < viewport.width - 12 &&
+        point.y < viewport.height - 12,
+    )
+    .sort((a, b) => a.y - b.y)[0]
+  expect(point).toBeDefined()
+  if (touch) await canvas.tap({ position: point })
+  else await canvas.click({ position: point })
+  await expect(canvas).toHaveAttribute('data-section-selected', 'true')
+  await expect(page.locator('.section-face-handle')).toHaveCount(6)
+}
+
+async function enableSection(page: Page, touch = false) {
+  await page.getByRole('checkbox', { name: '단면상자', exact: true }).check()
+  await expect(page.locator('.section-face-handle')).toHaveCount(0)
+  await expect(page.locator('input[type="range"]')).toHaveCount(0)
+  await expect(page.locator('canvas')).toHaveAttribute('data-section-selected', 'false')
+  const base = await boundsOf(page)
+  await selectBox(page, base, touch)
+  return base
+}
+
+async function faceValue(page: Page, axis: string, side: '최소' | '최대') {
+  return Number(
+    (await handle(page, axis, side).locator('.section-face-value').textContent())!.replace('%', ''),
+  )
 }
 
 async function arrowDirection(button: Locator): Promise<Direction> {
@@ -127,13 +212,13 @@ async function expectSeparatedHandles(page: Page) {
     .toEqual([])
 }
 
-test('face arrows resize the live sample, synchronize sliders and release camera controls', async ({
+test('selecting the box reveals face arrows that resize the live sample and release camera controls', async ({
   page,
 }) => {
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   await openBuilding(page)
-  await page.getByRole('checkbox', { name: '단면상자', exact: true }).check()
+  const base = await enableSection(page)
   for (const axis of ['X', 'Y', 'Z']) {
     await expect(handle(page, axis, '최소')).toBeVisible()
     await expect(handle(page, axis, '최대')).toBeVisible()
@@ -143,11 +228,9 @@ test('face arrows resize the live sample, synchronize sliders and release camera
   const beforeBounds = JSON.parse((await canvas.getAttribute('data-section-max'))!) as number[]
   const beforeDirections = await directions(page)
   await dragInward(page, handle(page, 'Y', '최대'), 70)
-  await expect
-    .poll(async () => Number(await slider(page, 'Y', '최대').inputValue()))
-    .toBeLessThan(95)
-  expect(Number(await slider(page, 'Y', '최대').inputValue())).toBeGreaterThan(1)
-  await expect(slider(page, 'Y', '최소')).toHaveValue('0')
+  await expect.poll(() => faceValue(page, 'Y', '최대')).toBeLessThan(95)
+  expect(await faceValue(page, 'Y', '최대')).toBeGreaterThan(1)
+  await expect.poll(() => faceValue(page, 'Y', '최소')).toBe(0)
   const afterBounds = JSON.parse((await canvas.getAttribute('data-section-max'))!) as number[]
   expect(afterBounds[1]).toBeLessThan(beforeBounds[1])
   expect(afterBounds[0]).toBeCloseTo(beforeBounds[0], 8)
@@ -160,25 +243,46 @@ test('face arrows resize the live sample, synchronize sliders and release camera
   await expect(details(page)).toContainText('선택한 부재가 없습니다.')
   await expect(members(page).locator('tbody tr')).toHaveCount(72)
   await expect(page.getByRole('region', { name: '건물 집계 지표' })).toContainText('64.53 m³')
-  await page.screenshot({ path: '/tmp/section-handles-desktop.png', fullPage: true })
+  await page.screenshot({ path: '/tmp/revit-section-desktop-selected.png', fullPage: true })
+  // Escape must deselect the box even while a captured pointer is dragging a
+  // face, and the partial edit must survive the selection change.
+  const activeButton = handle(page, 'Y', '최대')
+  await activeButton.scrollIntoViewIfNeeded()
+  const activeDirection = await arrowDirection(activeButton)
+  const activeBounds = (await activeButton.boundingBox())!
+  const activeX = activeBounds.x + activeBounds.width / 2
+  const activeY = activeBounds.y + activeBounds.height / 2
+  await page.mouse.move(activeX, activeY)
+  await page.mouse.down()
+  await page.mouse.move(activeX - activeDirection.x * 12, activeY - activeDirection.y * 12, {
+    steps: 3,
+  })
+  await expect.poll(async () => (await boundsOf(page)).max[1]).toBeLessThan(afterBounds[1])
+  const clipped = await boundsOf(page)
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.section-face-handle')).toHaveCount(0)
+  expect(await boundsOf(page)).toEqual(clipped)
+  await page.mouse.up()
+  await page.screenshot({ path: '/tmp/revit-section-desktop-outline.png', fullPage: true })
+  await selectBox(page, base)
 
   // Direct handles retain a keyboard path, and opposing faces cannot cross.
   await handle(page, 'Y', '최대').focus()
   await page.keyboard.press('Home')
-  await expect(slider(page, 'Y', '최대')).toHaveValue('1')
+  await expect.poll(() => faceValue(page, 'Y', '최대')).toBe(1)
   await page.keyboard.press('ArrowLeft')
-  await expect(slider(page, 'Y', '최대')).toHaveValue('1')
+  await expect.poll(() => faceValue(page, 'Y', '최대')).toBe(1)
   await page.keyboard.press('Shift+ArrowUp')
-  await expect(slider(page, 'Y', '최대')).toHaveValue('11')
+  await expect.poll(() => faceValue(page, 'Y', '최대')).toBe(11)
   await page.keyboard.press('End')
-  await expect(slider(page, 'Y', '최대')).toHaveValue('100')
+  await expect.poll(() => faceValue(page, 'Y', '최대')).toBe(100)
   await handle(page, 'Y', '최소').focus()
   await page.keyboard.press('End')
-  await expect(slider(page, 'Y', '최소')).toHaveValue('99')
+  await expect.poll(() => faceValue(page, 'Y', '최소')).toBe(99)
   await page.keyboard.press('ArrowRight')
-  await expect(slider(page, 'Y', '최소')).toHaveValue('99')
+  await expect.poll(() => faceValue(page, 'Y', '최소')).toBe(99)
   await page.keyboard.press('Home')
-  await expect(slider(page, 'Y', '최소')).toHaveValue('0')
+  await expect.poll(() => faceValue(page, 'Y', '최소')).toBe(0)
   await expectOrbitWorks(page)
   expect(errors).toEqual([])
 })
@@ -196,7 +300,7 @@ test('direct arrows resize a selected real IFC member without changing its quant
   await members(page)
     .getByRole('button', { name: /Round concrete column G.*선택$/ })
     .click()
-  await page.getByRole('checkbox', { name: '단면상자', exact: true }).check()
+  await enableSection(page)
   const canvas = page.getByLabel('IFC 모델 3D 뷰어', { exact: true })
   await expect(canvas).toHaveAttribute('data-section-box', 'true')
   const beforeMin = JSON.parse((await canvas.getAttribute('data-section-min'))!) as number[]
@@ -204,14 +308,10 @@ test('direct arrows resize a selected real IFC member without changing its quant
   expect(beforeMax[1] - beforeMin[1]).toBeGreaterThan(3)
   expect(beforeMax[1] - beforeMin[1]).toBeLessThan(4)
   await dragInward(page, handle(page, 'Y', '최대'), 60)
-  await expect
-    .poll(async () => Number(await slider(page, 'Y', '최대').inputValue()))
-    .toBeLessThan(95)
+  await expect.poll(() => faceValue(page, 'Y', '최대')).toBeLessThan(95)
   const afterMax = JSON.parse((await canvas.getAttribute('data-section-max'))!) as number[]
   expect(afterMax[1]).toBeLessThan(beforeMax[1])
-  await expect(page.getByRole('region', { name: '단면상자 범위', exact: true })).toContainText(
-    '선택 부재 기준: Round concrete column G',
-  )
+  await expect(details(page)).toContainText('Round concrete column G')
   await expect(page.getByTestId('building-selected-volume')).toContainText('0.59')
   await expect(members(page).locator('tbody tr')).toHaveCount(5)
   await expectOrbitWorks(page)
@@ -228,7 +328,7 @@ test('touch dragging does not scroll the page and touch cancellation restores or
   try {
     const page = await context.newPage()
     await openBuilding(page)
-    await page.getByRole('checkbox', { name: '단면상자', exact: true }).check()
+    await enableSection(page, true)
     const button = handle(page, 'Y', '최대')
     await button.scrollIntoViewIfNeeded()
     const client = await context.newCDPSession(page)
@@ -260,9 +360,7 @@ test('touch dragging does not scroll the page and touch cancellation restores or
     }
     const scrollBefore = await page.evaluate(() => window.scrollY)
     await touchDrag(40, false)
-    await expect
-      .poll(async () => Number(await slider(page, 'Y', '최대').inputValue()))
-      .toBeLessThan(95)
+    await expect.poll(() => faceValue(page, 'Y', '최대')).toBeLessThan(95)
     expect(await page.evaluate(() => window.scrollY)).toBeCloseTo(scrollBefore, 0)
     await touchDrag(15, true)
     await expectOrbitWorks(page)
@@ -270,7 +368,7 @@ test('touch dragging does not scroll the page and touch cancellation restores or
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true)
-    await page.screenshot({ path: '/tmp/section-handles-mobile.png', fullPage: true })
+    await page.screenshot({ path: '/tmp/revit-section-mobile-selected.png', fullPage: true })
     await client.detach()
   } finally {
     await context.close()

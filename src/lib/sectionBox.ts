@@ -8,6 +8,12 @@ export type SectionBoxSettings = {
   ranges: { x: [number, number]; y: [number, number]; z: [number, number] }
 }
 
+export const fullSectionRanges = (): SectionBoxSettings['ranges'] => ({
+  x: [0, 100],
+  y: [0, 100],
+  z: [0, 100],
+})
+
 function paddedBounds(source: THREE.Box3, selected: boolean) {
   const bounds = source.clone()
   if (bounds.isEmpty()) bounds.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(1, 1, 1))
