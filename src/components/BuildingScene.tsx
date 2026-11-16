@@ -12,6 +12,7 @@ import {
   type SectionBoxSettings,
 } from '../lib/sectionBox'
 import { FrameBoxCamera, SectionBoxVisual } from './SectionBox'
+import SectionBoxHandles from './SectionBoxHandles'
 
 type Props = {
   elements: BuildingElement[]
@@ -20,6 +21,7 @@ type Props = {
   floor: FloorFilter
   resetKey: number
   sectionBox?: SectionBoxSettings | null
+  onSectionBoxChange?: (settings: SectionBoxSettings) => void
 }
 
 const COLORS = { column: '#e2d9c7', beam: '#bc9f78', slab: '#95b5bd', wall: '#d2d6ca' }
@@ -181,6 +183,7 @@ export default function BuildingScene({
   floor,
   resetKey,
   sectionBox,
+  onSectionBoxChange,
 }: Props) {
   const visible = filterBuildingElements(elements, floor)
   const base = floor === 'all' ? 0 : (Number.parseInt(floor) - 1) * 3.2
@@ -280,6 +283,14 @@ export default function BuildingScene({
         <FrameCamera floor={floor} resetKey={resetKey} />
       )}
       <SectionBoxVisual bounds={clipBounds} />
+      {sectionBase && clipBounds && sectionBox && onSectionBoxChange && (
+        <SectionBoxHandles
+          baseBounds={sectionBase}
+          bounds={clipBounds}
+          settings={sectionBox}
+          onChange={onSectionBoxChange}
+        />
+      )}
     </Canvas>
   )
 }

@@ -11,6 +11,7 @@ import {
   type SectionBoxSettings,
 } from '../lib/sectionBox'
 import { FrameBoxCamera, SectionBoxVisual } from './SectionBox'
+import SectionBoxHandles from './SectionBoxHandles'
 
 type Props = {
   model: IfcModel
@@ -19,6 +20,7 @@ type Props = {
   onSelect: (id: string) => void
   resetKey: number
   sectionBox?: SectionBoxSettings | null
+  onSectionBoxChange?: (settings: SectionBoxSettings) => void
 }
 
 type PlacedMesh = {
@@ -159,7 +161,15 @@ function IfcMesh({
   )
 }
 
-function ModelContents({ model, visibleIds, selectedId, onSelect, resetKey, sectionBox }: Props) {
+function ModelContents({
+  model,
+  visibleIds,
+  selectedId,
+  onSelect,
+  resetKey,
+  sectionBox,
+  onSectionBoxChange,
+}: Props) {
   const prepared = useMemo(() => prepareModel(model), [model])
   const visibilityKey = visibleIds.join('\u0000')
   const visible = useMemo(() => {
@@ -218,6 +228,14 @@ function ModelContents({ model, visibleIds, selectedId, onSelect, resetKey, sect
       ))}
       <FrameBoxCamera bounds={sectionBase ?? visibleBounds} resetKey={resetKey} />
       <SectionBoxVisual bounds={clipBounds} />
+      {sectionBase && clipBounds && sectionBox && onSectionBoxChange && (
+        <SectionBoxHandles
+          baseBounds={sectionBase}
+          bounds={clipBounds}
+          settings={sectionBox}
+          onChange={onSectionBoxChange}
+        />
+      )}
     </>
   )
 }

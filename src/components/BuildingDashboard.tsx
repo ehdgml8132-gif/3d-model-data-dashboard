@@ -666,6 +666,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                               onSelect={setSelectedId}
                               resetKey={resetKey}
                               sectionBox={sectionBox}
+                              onSectionBoxChange={setSectionBox}
                             />
                           ) : (
                             <BuildingScene
@@ -675,6 +676,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                               floor={sampleFloor}
                               resetKey={resetKey}
                               sectionBox={sectionBox}
+                              onSectionBoxChange={setSectionBox}
                             />
                           )}
                         </Suspense>
@@ -691,7 +693,11 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                     )}
                     <div className="scene-hint">
                       <MousePointer2 size={13} />
-                      <span>부재 클릭 · 드래그하여 회전 · 스크롤로 확대</span>
+                      <span>
+                        {sectionBox
+                          ? '화살표 드래그로 단면 조절 · 빈 곳 드래그로 회전'
+                          : '부재 클릭 · 드래그하여 회전 · 스크롤로 확대'}
+                      </span>
                     </div>
                   </div>
                   <div className="building-legend">

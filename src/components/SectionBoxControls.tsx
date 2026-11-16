@@ -33,7 +33,8 @@ export default function SectionBoxControls({
               : '전체 건물 기준'}
           </strong>
           <p>
-            각 축의 범위를 줄여 내부를 확인하세요. 상자 밖 형상만 숨기며 물량은 바뀌지 않습니다.
+            상자의 화살표를 드래그해 내부를 확인하세요. 아래 슬라이더로도 세밀하게 조절할 수
+            있습니다.
           </p>
         </div>
         <button
