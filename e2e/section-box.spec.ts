@@ -51,6 +51,7 @@ async function expectNoSelection(page: Page) {
     detail(page).getByRole('heading', { name: '선택한 부재가 없습니다.', exact: true }),
   ).toBeVisible()
   await expect(members(page).locator('tbody .selected-row')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '선택 해제', exact: true })).toBeDisabled()
 }
 
 async function sectionBounds(canvas: Locator) {
@@ -61,11 +62,10 @@ async function sectionBounds(canvas: Locator) {
   }
 }
 
-test('deselection stays empty and a whole-building section survives floor and view switches', async ({
+test('initial selection stays empty and a whole-building section survives floor and view switches', async ({
   page,
 }) => {
   await openBuilding(page)
-  await page.getByRole('button', { name: '선택 해제', exact: true }).click()
   await expectNoSelection(page)
   await page.getByRole('checkbox', { name: '단면상자', exact: true }).check()
   await expect(sectionControls(page)).toContainText('전체 건물 기준')
@@ -166,6 +166,7 @@ test('real IFC section bounds use the selected placed geometry and restore on mo
     buffer: fixture,
   })
   await expect(members(page).locator('tbody tr')).toHaveCount(5, { timeout: 45_000 })
+  await expectNoSelection(page)
   await members(page)
     .getByRole('button', { name: /Round concrete column G.*선택$/ })
     .click()
@@ -193,6 +194,7 @@ test('real IFC section bounds use the selected placed geometry and restore on mo
   await page.getByRole('button', { name: '샘플로 돌아가기', exact: true }).click()
   await expect(page.getByRole('checkbox', { name: '단면상자', exact: true })).not.toBeChecked()
   await expect(members(page).locator('tbody tr')).toHaveCount(72)
+  await expectNoSelection(page)
 })
 
 test('graphs follow floor data and section controls fit a mobile viewport', async ({
@@ -212,7 +214,7 @@ test('graphs follow floor data and section controls fit a mobile viewport', asyn
   await expect(graphData(page)).toContainText('24')
   await charts.getByRole('button', { name: '부재 수', exact: true }).click()
   await expect(charts.getByRole('heading', { name: '층별 부재 수', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '선택 해제', exact: true }).click()
+  await expectNoSelection(page)
   await page.getByRole('checkbox', { name: '단면상자', exact: true }).check()
   await expect(sectionControls(page)).toBeVisible()
   await expect(sectionControls(page)).toContainText('전체 건물 기준')

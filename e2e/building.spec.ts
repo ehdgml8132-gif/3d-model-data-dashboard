@@ -15,6 +15,12 @@ function buildingDetail(page: Page) {
   return page.getByRole('article', { name: '선택한 부재 정보', exact: true })
 }
 
+async function expectNoBuildingSelection(page: Page) {
+  await expect(buildingDetail(page)).toContainText('선택한 부재가 없습니다.')
+  await expect(buildingList(page).locator('tbody .selected-row')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '선택 해제', exact: true })).toBeDisabled()
+}
+
 function buildingMetric(page: Page, label: string) {
   return page
     .getByRole('region', { name: '건물 집계 지표' })
@@ -38,9 +44,7 @@ async function openMemberData(page: Page) {
   ).toHaveAttribute('aria-pressed', 'false')
 }
 
-test('building sample renders a live WebGL model and selected member information', async ({
-  page,
-}) => {
+test('building sample starts with a live WebGL model and no selected member', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   await openBuilding(page)
@@ -59,7 +63,7 @@ test('building sample renders a live WebGL model and selected member information
       return !!gl && !gl.isContextLost() && canvas.width > 0 && canvas.height > 0
     }),
   ).toBe(true)
-  await expect(buildingDetail(page)).toContainText('1F-C09')
+  await expectNoBuildingSelection(page)
   await expect(buildingList(page).locator('tbody tr')).toHaveCount(72)
   await expect(buildingMetric(page, '표시 부재')).toHaveText('72개')
   await expect(buildingMetric(page, '총 체적')).toHaveText('64.53 m³')
@@ -76,6 +80,10 @@ test('member data is a separate metadata view and can return to the spatial view
   page,
 }) => {
   await openBuilding(page)
+  await buildingList(page)
+    .getByRole('button', { name: /^1F-C09.*선택$/ })
+    .click()
+  await expect(buildingDetail(page)).toContainText('1F-C09')
   await buildingList(page).getByRole('button', { name: '전체 보기', exact: true }).click()
   await expect(page.getByRole('heading', { name: '부재 데이터', exact: true })).toBeVisible()
   await expect(page.locator('canvas')).toHaveCount(0)
@@ -238,7 +246,7 @@ test('switching building and café samples preserves uploaded café data', async
   await expect(page.getByTestId('selected-revenue')).toHaveText('2,000원')
   await page.getByRole('button', { name: '건물 샘플', exact: true }).click()
   await expect(page.getByRole('heading', { name: '건물 모델 대시보드', exact: true })).toBeVisible()
-  await expect(buildingDetail(page)).toContainText('1F-C09')
+  await expectNoBuildingSelection(page)
   await page.getByRole('button', { name: '카페 샘플', exact: true }).click()
   await expect(page.getByRole('heading', { name: '모노 카페 대시보드', exact: true })).toBeVisible()
   await expect(

@@ -136,7 +136,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
   const [activeView, setActiveView] = useSessionState<'space' | 'data'>('building:view', 'space')
   const [kind, setKind] = useSessionState<DisplayKind | 'all'>('building:kind', 'all')
   const [query, setQuery] = useSessionState('building:query', '')
-  const [selectedId, setSelectedId] = useSessionState('building:selected', '1F-C09')
+  const [selectedId, setSelectedId] = useSessionState('building:selected', '')
   const [sectionBox, setSectionBox] = useSessionState<SectionBoxSettings | null>(
     'building:section-box',
     null,
@@ -233,7 +233,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
       setBusiness(null)
       setBusinessOpen(false)
       clearFilters()
-      setSelectedId(model.elements[0]?.id ?? '')
+      setSelectedId('')
       setResetKey((value) => value + 1)
       setImportNotice(
         `${model.name} 모델을 불러왔습니다. 업무 데이터 연결은 새 모델에 맞게 다시 설정해주세요.`,
@@ -267,7 +267,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
     setBusiness(null)
     setBusinessOpen(false)
     clearFilters()
-    setSelectedId('1F-C09')
+    setSelectedId('')
     setResetKey((value) => value + 1)
     setImportError('')
     setImportNotice('건물 샘플로 돌아왔습니다.')
