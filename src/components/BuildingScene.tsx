@@ -1,9 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Edges, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
-import type { BuildingElement, FloorFilter } from '../data/building'
+import { BUILDING_ELEMENTS, type BuildingElement, type FloorFilter } from '../data/building'
 import { filterBuildingElements } from '../lib/building'
+import {
+  boundsForSample,
+  clippingPlanes,
+  sectionBounds,
+  sectionRaycast,
+  type SectionBoxSettings,
+} from '../lib/sectionBox'
+import { FrameBoxCamera, SectionBoxVisual } from './SectionBox'
 
 type Props = {
   elements: BuildingElement[]
@@ -11,6 +19,7 @@ type Props = {
   onSelect: (id: string) => void
   floor: FloorFilter
   resetKey: number
+  sectionBox?: SectionBoxSettings | null
 }
 
 const COLORS = { column: '#e2d9c7', beam: '#bc9f78', slab: '#95b5bd', wall: '#d2d6ca' }
@@ -20,14 +29,20 @@ function ElementMesh({
   element,
   selected,
   onSelect,
+  clipBounds,
+  planes,
 }: {
   element: BuildingElement
   selected: boolean
   onSelect: Props['onSelect']
+  clipBounds: THREE.Box3 | null
+  planes: THREE.Plane[]
 }) {
   const [hovered, setHovered] = useState(false)
   const isSlab = element.kind === 'slab'
   const color = selected ? '#63ab8e' : hovered ? '#e0b46e' : COLORS[element.kind]
+  const raycast = useMemo(() => sectionRaycast(clipBounds), [clipBounds])
+  useEffect(() => setHovered(false), [clipBounds])
   useEffect(() => {
     if (hovered) document.body.style.cursor = 'pointer'
     return () => {
@@ -48,8 +63,8 @@ function ElementMesh({
   return (
     <group position={element.position}>
       <mesh
-        {...(!isSlab ? handlers : {})}
-        raycast={isSlab ? ignoreRaycast : undefined}
+        {...(!isSlab || clipBounds ? handlers : {})}
+        raycast={isSlab && !clipBounds ? ignoreRaycast : raycast}
         castShadow={!isSlab}
         receiveShadow
       >
@@ -60,6 +75,9 @@ function ElementMesh({
           transparent={isSlab}
           opacity={isSlab ? (selected ? 0.55 : 0.22) : 1}
           depthWrite={!isSlab}
+          side={clipBounds ? THREE.DoubleSide : THREE.FrontSide}
+          clippingPlanes={planes}
+          clipShadows
         />
         <Edges
           threshold={25}
@@ -67,13 +85,20 @@ function ElementMesh({
           transparent
           opacity={selected ? 0.9 : 0.45}
           raycast={ignoreRaycast}
+          clippingPlanes={planes}
         />
       </mesh>
       {isSlab && (
-        <mesh position={[0, 0, element.dimensions[2] / 2 - 0.06]} {...handlers}>
+        <mesh position={[0, 0, element.dimensions[2] / 2 - 0.06]} {...handlers} raycast={raycast}>
           {/* The exposed front edge selects the slab without blocking frame clicks. */}
           <boxGeometry args={[element.dimensions[0], element.dimensions[1] + 0.035, 0.12]} />
-          <meshStandardMaterial color={color} roughness={0.7} />
+          <meshStandardMaterial
+            color={color}
+            roughness={0.7}
+            clippingPlanes={planes}
+            clipShadows
+            side={clipBounds ? THREE.DoubleSide : THREE.FrontSide}
+          />
         </mesh>
       )}
       {selected && (
@@ -86,6 +111,7 @@ function ElementMesh({
             opacity={0.9}
             depthTest={false}
             raycast={ignoreRaycast}
+            clippingPlanes={planes}
           />
         </mesh>
       )}
@@ -117,6 +143,8 @@ function FrameCamera({ floor, resetKey }: { floor: FloorFilter; resetKey: number
         ? (controls as unknown as {
             target: THREE.Vector3
             enableDamping: boolean
+            minZoom: number
+            maxZoom: number
             update: () => void
           })
         : null
@@ -131,10 +159,14 @@ function FrameCamera({ floor, resetKey }: { floor: FloorFilter; resetKey: number
     camera.position.set(14, targetY + 12, 16)
     camera.lookAt(0, targetY, 0)
     if (camera instanceof THREE.OrthographicCamera) {
+      camera.near = 0.1
+      camera.far = 120
       camera.zoom = Math.min(size.width / 15.2, size.height / (floor === 'all' ? 14.8 : 9.5))
       camera.updateProjectionMatrix()
     }
     if (orbit) {
+      orbit.minZoom = 13
+      orbit.maxZoom = 100
       orbit.update()
       orbit.enableDamping = damping ?? true
     }
@@ -142,9 +174,26 @@ function FrameCamera({ floor, resetKey }: { floor: FloorFilter; resetKey: number
   return null
 }
 
-export default function BuildingScene({ elements, selectedId, onSelect, floor, resetKey }: Props) {
+export default function BuildingScene({
+  elements,
+  selectedId,
+  onSelect,
+  floor,
+  resetKey,
+  sectionBox,
+}: Props) {
   const visible = filterBuildingElements(elements, floor)
   const base = floor === 'all' ? 0 : (Number.parseInt(floor) - 1) * 3.2
+  const sectionTarget = sectionBox?.targetId
+  const sectionBase = useMemo(
+    () => (sectionTarget === undefined ? null : boundsForSample(BUILDING_ELEMENTS, sectionTarget)),
+    [sectionTarget],
+  )
+  const clipBounds = useMemo(
+    () => (sectionBase && sectionBox ? sectionBounds(sectionBase, sectionBox.ranges) : null),
+    [sectionBase, sectionBox],
+  )
+  const planes = useMemo(() => (clipBounds ? clippingPlanes(clipBounds) : []), [clipBounds])
   return (
     <Canvas
       orthographic
@@ -152,6 +201,10 @@ export default function BuildingScene({ elements, selectedId, onSelect, floor, r
       dpr={[1, 1.6]}
       camera={{ position: [14, 16.4, 16], zoom: 28, near: 0.1, far: 120 }}
       gl={{ antialias: true, alpha: true }}
+      onCreated={({ gl }) => {
+        gl.localClippingEnabled = true
+        gl.domElement.setAttribute('aria-label', '건물 모델 3D 뷰어')
+      }}
     >
       <color attach="background" args={['#f0f3ef']} />
       <ambientLight intensity={1.6} />
@@ -204,6 +257,8 @@ export default function BuildingScene({ elements, selectedId, onSelect, floor, r
           element={element}
           selected={selectedId === element.id}
           onSelect={onSelect}
+          clipBounds={clipBounds}
+          planes={planes}
         />
       ))}
       <mesh position={[0, base - 0.285, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
@@ -213,13 +268,18 @@ export default function BuildingScene({ elements, selectedId, onSelect, floor, r
       <OrbitControls
         makeDefault
         target={[0, 4.4, 0]}
-        enablePan={false}
+        enablePan={Boolean(sectionBox)}
         minZoom={13}
         maxZoom={100}
         minPolarAngle={Math.PI / 6}
         maxPolarAngle={Math.PI / 2.2}
       />
-      <FrameCamera floor={floor} resetKey={resetKey} />
+      {sectionBase ? (
+        <FrameBoxCamera bounds={sectionBase} resetKey={resetKey} />
+      ) : (
+        <FrameCamera floor={floor} resetKey={resetKey} />
+      )}
+      <SectionBoxVisual bounds={clipBounds} />
     </Canvas>
   )
 }

@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber'
+import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { Edges, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import type { IfcModel } from '../ifc/types'
+import {
+  boundsForIfc,
+  clippingPlanes,
+  sectionBounds,
+  sectionRaycast,
+  type SectionBoxSettings,
+} from '../lib/sectionBox'
+import { FrameBoxCamera, SectionBoxVisual } from './SectionBox'
 
 type Props = {
   model: IfcModel
@@ -10,6 +18,7 @@ type Props = {
   selectedId: string
   onSelect: (id: string) => void
   resetKey: number
+  sectionBox?: SectionBoxSettings | null
 }
 
 type PlacedMesh = {
@@ -21,7 +30,6 @@ type PlacedMesh = {
 }
 
 const ignoreRaycast = () => undefined
-const viewDirection = new THREE.Vector3(1, 0.85, 1).normalize()
 
 function prepareModel(model: IfcModel) {
   const geometries = new Map<Float32Array, THREE.BufferGeometry>()
@@ -78,10 +86,14 @@ function IfcMesh({
   mesh,
   selected,
   onSelect,
+  clipBounds,
+  planes,
 }: {
   mesh: PlacedMesh
   selected: boolean
   onSelect: Props['onSelect']
+  clipBounds: THREE.Box3 | null
+  planes: THREE.Plane[]
 }) {
   const [hovered, setHovered] = useState(false)
   const color = useMemo(() => {
@@ -90,6 +102,8 @@ function IfcMesh({
     return hovered ? original.lerp(new THREE.Color('#e0b46e'), 0.4) : original
   }, [mesh.color, selected, hovered])
   const opacity = selected ? 0.85 : THREE.MathUtils.clamp(mesh.color[3], 0, 1)
+  const raycast = useMemo(() => sectionRaycast(clipBounds), [clipBounds])
+  useEffect(() => setHovered(false), [clipBounds])
 
   useEffect(() => {
     if (!hovered) return
@@ -104,6 +118,7 @@ function IfcMesh({
       geometry={mesh.geometry}
       matrix={mesh.matrix}
       matrixAutoUpdate={false}
+      raycast={raycast}
       onClick={(event: ThreeEvent<MouseEvent>) => {
         event.stopPropagation()
         onSelect(mesh.elementId)
@@ -125,6 +140,8 @@ function IfcMesh({
         polygonOffset={selected}
         polygonOffsetFactor={1}
         polygonOffsetUnits={1}
+        clippingPlanes={planes}
+        clipShadows
       />
       {selected && (
         <Edges
@@ -135,72 +152,14 @@ function IfcMesh({
           opacity={0.95}
           depthTest={false}
           raycast={ignoreRaycast}
+          clippingPlanes={planes}
         />
       )}
     </mesh>
   )
 }
 
-function FrameCamera({ bounds, resetKey }: { bounds: THREE.Box3; resetKey: number }) {
-  const { camera, controls, size } = useThree()
-  useEffect(() => {
-    if (!(camera instanceof THREE.OrthographicCamera) || !size.width || !size.height) return
-    const center = bounds.getCenter(new THREE.Vector3())
-    const diameter = Math.max(bounds.getSize(new THREE.Vector3()).length(), 0.01)
-    const orbit =
-      controls && 'target' in controls
-        ? (controls as unknown as {
-            target: THREE.Vector3
-            enableDamping: boolean
-            minZoom: number
-            maxZoom: number
-            update: () => void
-          })
-        : null
-    const damping = orbit?.enableDamping
-    if (orbit) {
-      // Consume the previous interaction's inertia before resetting the camera.
-      orbit.enableDamping = false
-      orbit.update()
-      orbit.target.copy(center)
-    }
-
-    camera.position.copy(center).addScaledVector(viewDirection, diameter * 1.5)
-    camera.near = Math.max(diameter / 10000, 0.00001)
-    camera.far = diameter * 20
-    camera.lookAt(center)
-    camera.updateMatrixWorld(true)
-
-    // Fit the actual transformed model in camera space, including tall, wide,
-    // rotated and millimetre-source models, with equal padding on both axes.
-    const projected = new THREE.Box3()
-    for (const x of [bounds.min.x, bounds.max.x]) {
-      for (const y of [bounds.min.y, bounds.max.y]) {
-        for (const z of [bounds.min.z, bounds.max.z]) {
-          projected.expandByPoint(
-            new THREE.Vector3(x, y, z).applyMatrix4(camera.matrixWorldInverse),
-          )
-        }
-      }
-    }
-    const extent = projected.getSize(new THREE.Vector3())
-    camera.zoom = Math.min(
-      size.width / (Math.max(extent.x, diameter * 0.01) * 1.22),
-      size.height / (Math.max(extent.y, diameter * 0.01) * 1.22),
-    )
-    camera.updateProjectionMatrix()
-
-    if (orbit) {
-      orbit.minZoom = camera.zoom / 30
-      orbit.maxZoom = camera.zoom * 100
-      orbit.update()
-      orbit.enableDamping = damping ?? true
-    }
-  }, [camera, controls, bounds, resetKey, size.width, size.height])
-  return null
-}
-
-function ModelContents({ model, visibleIds, selectedId, onSelect, resetKey }: Props) {
+function ModelContents({ model, visibleIds, selectedId, onSelect, resetKey, sectionBox }: Props) {
   const prepared = useMemo(() => prepareModel(model), [model])
   const visibilityKey = visibleIds.join('\u0000')
   const visible = useMemo(() => {
@@ -212,6 +171,19 @@ function ModelContents({ model, visibleIds, selectedId, onSelect, resetKey }: Pr
     for (const mesh of visible) bounds.union(mesh.bounds)
     return bounds.isEmpty() ? prepared.bounds : bounds
   }, [prepared, visible])
+  const sectionTarget = sectionBox?.targetId
+  const sectionBase = useMemo(
+    () =>
+      sectionTarget === undefined
+        ? null
+        : boundsForIfc(prepared.meshes, prepared.bounds, sectionTarget),
+    [prepared, sectionTarget],
+  )
+  const clipBounds = useMemo(
+    () => (sectionBase && sectionBox ? sectionBounds(sectionBase, sectionBox.ranges) : null),
+    [sectionBase, sectionBox],
+  )
+  const planes = useMemo(() => (clipBounds ? clippingPlanes(clipBounds) : []), [clipBounds])
   const ground = useMemo(() => {
     const extent = prepared.bounds.getSize(new THREE.Vector3())
     const size = Math.max(extent.x, extent.z, extent.y * 0.2, 0.1) * 1.35
@@ -240,9 +212,12 @@ function ModelContents({ model, visibleIds, selectedId, onSelect, resetKey }: Pr
           mesh={mesh}
           selected={selectedId === mesh.elementId}
           onSelect={onSelect}
+          clipBounds={clipBounds}
+          planes={planes}
         />
       ))}
-      <FrameCamera bounds={visibleBounds} resetKey={resetKey} />
+      <FrameBoxCamera bounds={sectionBase ?? visibleBounds} resetKey={resetKey} />
+      <SectionBoxVisual bounds={clipBounds} />
     </>
   )
 }
@@ -254,7 +229,10 @@ export default function IfcScene(props: Props) {
       dpr={[1, 1.6]}
       camera={{ position: [10, 10, 10], zoom: 1, near: 0.001, far: 1000 }}
       gl={{ antialias: true, alpha: true }}
-      onCreated={({ gl }) => gl.domElement.setAttribute('aria-label', 'IFC 모델 3D 뷰어')}
+      onCreated={({ gl }) => {
+        gl.localClippingEnabled = true
+        gl.domElement.setAttribute('aria-label', 'IFC 모델 3D 뷰어')
+      }}
     >
       <color attach="background" args={['#f0f3ef']} />
       <ambientLight intensity={1.25} />

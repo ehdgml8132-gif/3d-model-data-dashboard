@@ -39,6 +39,9 @@ import { loadIfcFile } from '../ifc/client'
 import { MAX_IFC_FILE_BYTES } from '../ifc/limits'
 import type { IfcModel } from '../ifc/types'
 import BusinessDataPanel, { type BusinessConnection } from './BusinessDataPanel'
+import BuildingAnalytics from './BuildingAnalytics'
+import SectionBoxControls, { fullSectionRanges } from './SectionBoxControls'
+import type { SectionBoxSettings } from '../lib/sectionBox'
 import { useSessionState } from '../lib/useSessionState'
 import './building.css'
 
@@ -134,6 +137,10 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
   const [kind, setKind] = useSessionState<DisplayKind | 'all'>('building:kind', 'all')
   const [query, setQuery] = useSessionState('building:query', '')
   const [selectedId, setSelectedId] = useSessionState('building:selected', '1F-C09')
+  const [sectionBox, setSectionBox] = useSessionState<SectionBoxSettings | null>(
+    'building:section-box',
+    null,
+  )
   const [resetKey, setResetKey] = useState(0)
   const [ifcModel, setIfcModel] = useSessionState<IfcModel | null>('building:model', null)
   const [modelVersion, setModelVersion] = useState(0)
@@ -175,7 +182,9 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
   const tableElements = ifcModel
     ? visible.slice(currentPage * IFC_TABLE_PAGE_SIZE, (currentPage + 1) * IFC_TABLE_PAGE_SIZE)
     : visible
-  const selected = floorElements.find((element) => element.id === selectedId) ?? floorElements[0]
+  const selected = selectedId
+    ? (floorElements.find((element) => element.id === selectedId) ?? floorElements[0])
+    : undefined
   const summary = useMemo(() => summarize(visible), [visible])
   const fullSummary = useMemo(() => summarize(elements), [elements])
   const maxKindVolume = Math.max(1, ...summary.byKind.map((row) => row.volume))
@@ -219,6 +228,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
       })
       if (controller.signal.aborted || importRequest.current?.token !== token) return
       setIfcModel(model)
+      setSectionBox(null)
       setModelVersion((value) => value + 1)
       setBusiness(null)
       setBusinessOpen(false)
@@ -252,6 +262,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
   function restoreSample() {
     cancelImport()
     setIfcModel(null)
+    setSectionBox(null)
     setModelVersion((value) => value + 1)
     setBusiness(null)
     setBusinessOpen(false)
@@ -587,89 +598,128 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
           </section>
           {activeView === 'space' && (
             <section className="building-model-grid" aria-label="건물 모델과 부재 정보">
-              <article className="card building-scene-card">
-                <div className="card-heading">
-                  <div className="heading-with-icon">
-                    <Building2 size={19} />
-                    <h2>{ifcModel ? '나의 건물 모델' : '모노 오피스'}</h2>
-                    <span className="subtle-badge">
-                      {ifcModel ? 'IFC MODEL' : 'STRUCTURE MODEL'}
-                    </span>
-                  </div>
-                  <button
-                    className="icon-button reset-view"
-                    title="시점 초기화"
-                    aria-label="3D 건물 시점 초기화"
-                    onClick={() => setResetKey((value) => value + 1)}
-                  >
-                    <RotateCcw size={16} />
-                  </button>
-                </div>
-                <div className="building-scene-wrap">
-                  <div className="scene-caption">
-                    <span className="live-dot" />
-                    {ifcModel ? 'IFC MODEL' : 'MONO OFFICE'}
-                    <span>{floor === 'all' ? '전체 층' : floorLabel(floor)}</span>
-                  </div>
-                  {visible.length ? (
-                    <BuildingSceneBoundary key={modelVersion}>
-                      <Suspense
-                        fallback={
-                          <div className="scene-fallback">
-                            <LoaderCircle className="spin" size={28} />
-                            <p>건물 모델을 준비하고 있어요.</p>
-                          </div>
-                        }
+              <div className="building-viewer-column">
+                <article className="card building-scene-card">
+                  <div className="card-heading">
+                    <div className="heading-with-icon">
+                      <Building2 size={19} />
+                      <h2>{ifcModel ? '나의 건물 모델' : '모노 오피스'}</h2>
+                      <span className="subtle-badge">
+                        {ifcModel ? 'IFC MODEL' : 'STRUCTURE MODEL'}
+                      </span>
+                    </div>
+                    <div className="building-viewer-tools">
+                      <button
+                        type="button"
+                        className="building-clear-selection"
+                        aria-label="선택 해제"
+                        disabled={!selected}
+                        onClick={() => setSelectedId('')}
                       >
-                        {ifcModel ? (
-                          <IfcScene
-                            model={ifcModel}
-                            visibleIds={visibleIfcIds}
-                            selectedId={selected?.id ?? ''}
-                            onSelect={setSelectedId}
-                            resetKey={resetKey}
-                          />
-                        ) : (
-                          <BuildingScene
-                            elements={sampleVisible}
-                            selectedId={selected?.id ?? ''}
-                            onSelect={setSelectedId}
-                            floor={sampleFloor}
-                            resetKey={resetKey}
-                          />
-                        )}
-                      </Suspense>
-                    </BuildingSceneBoundary>
-                  ) : (
-                    <div className="scene-fallback">
-                      <Search size={32} />
-                      <strong>표시할 부재가 없습니다.</strong>
-                      <p>층·종류·검색 조건을 조정해보세요.</p>
-                      <button className="button secondary" onClick={clearFilters}>
-                        조건 초기화
+                        <X size={13} /> 선택 해제
+                      </button>
+                      <label className={`building-section-toggle ${sectionBox ? 'active' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={sectionBox !== null}
+                          onChange={(event) =>
+                            setSectionBox(
+                              event.target.checked
+                                ? { targetId: selected?.id ?? null, ranges: fullSectionRanges() }
+                                : null,
+                            )
+                          }
+                        />
+                        단면상자
+                      </label>
+                      <button
+                        className="icon-button reset-view"
+                        title="시점 초기화"
+                        aria-label="3D 건물 시점 초기화"
+                        onClick={() => setResetKey((value) => value + 1)}
+                      >
+                        <RotateCcw size={16} />
                       </button>
                     </div>
-                  )}
-                  <div className="scene-hint">
-                    <MousePointer2 size={13} />
-                    <span>부재 클릭 · 드래그하여 회전 · 스크롤로 확대</span>
                   </div>
-                </div>
-                <div className="building-legend">
-                  {ifcModel && <span>IFC 원본 재질</span>}
-                  {!ifcModel &&
-                    Object.entries(KIND_LABEL).map(([value, label]) => (
-                      <span key={value}>
-                        <i style={{ background: KIND_COLOR[value as DisplayKind] }} />
-                        {label}
-                      </span>
-                    ))}
-                  <span className="building-selected-key">
-                    <i />
-                    선택한 부재
-                  </span>
-                </div>
-              </article>
+                  <div className="building-scene-wrap">
+                    <div className="scene-caption">
+                      <span className="live-dot" />
+                      {ifcModel ? 'IFC MODEL' : 'MONO OFFICE'}
+                      <span>{floor === 'all' ? '전체 층' : floorLabel(floor)}</span>
+                    </div>
+                    {visible.length ? (
+                      <BuildingSceneBoundary key={modelVersion}>
+                        <Suspense
+                          fallback={
+                            <div className="scene-fallback">
+                              <LoaderCircle className="spin" size={28} />
+                              <p>건물 모델을 준비하고 있어요.</p>
+                            </div>
+                          }
+                        >
+                          {ifcModel ? (
+                            <IfcScene
+                              model={ifcModel}
+                              visibleIds={visibleIfcIds}
+                              selectedId={selected?.id ?? ''}
+                              onSelect={setSelectedId}
+                              resetKey={resetKey}
+                              sectionBox={sectionBox}
+                            />
+                          ) : (
+                            <BuildingScene
+                              elements={sampleVisible}
+                              selectedId={selected?.id ?? ''}
+                              onSelect={setSelectedId}
+                              floor={sampleFloor}
+                              resetKey={resetKey}
+                              sectionBox={sectionBox}
+                            />
+                          )}
+                        </Suspense>
+                      </BuildingSceneBoundary>
+                    ) : (
+                      <div className="scene-fallback">
+                        <Search size={32} />
+                        <strong>표시할 부재가 없습니다.</strong>
+                        <p>층·종류·검색 조건을 조정해보세요.</p>
+                        <button className="button secondary" onClick={clearFilters}>
+                          조건 초기화
+                        </button>
+                      </div>
+                    )}
+                    <div className="scene-hint">
+                      <MousePointer2 size={13} />
+                      <span>부재 클릭 · 드래그하여 회전 · 스크롤로 확대</span>
+                    </div>
+                  </div>
+                  <div className="building-legend">
+                    {ifcModel && <span>IFC 원본 재질</span>}
+                    {!ifcModel &&
+                      Object.entries(KIND_LABEL).map(([value, label]) => (
+                        <span key={value}>
+                          <i style={{ background: KIND_COLOR[value as DisplayKind] }} />
+                          {label}
+                        </span>
+                      ))}
+                    <span className="building-selected-key">
+                      <i />
+                      선택한 부재
+                    </span>
+                  </div>
+                  {sectionBox && (
+                    <SectionBoxControls
+                      settings={sectionBox}
+                      targetName={
+                        elements.find((element) => element.id === sectionBox.targetId)?.name
+                      }
+                      onChange={setSectionBox}
+                    />
+                  )}
+                </article>
+                <BuildingAnalytics elements={floorElements} isIfc={ifcModel !== null} />
+              </div>
               <article className="card building-detail" aria-label="선택한 부재 정보">
                 {selected ? (
                   <>
@@ -840,8 +890,14 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                 ) : (
                   <div className="building-no-selection">
                     <Cuboid size={38} />
-                    <h2>선택할 부재가 없습니다.</h2>
-                    <p>필터를 변경하면 부재의 속성을 확인할 수 있어요.</p>
+                    <h2>
+                      {floorElements.length ? '선택한 부재가 없습니다.' : '선택할 부재가 없습니다.'}
+                    </h2>
+                    <p>
+                      {floorElements.length
+                        ? '3D 모델이나 부재 목록에서 객체를 선택해 주세요.'
+                        : '필터를 변경하면 부재의 속성을 확인할 수 있어요.'}
+                    </p>
                   </div>
                 )}
               </article>
