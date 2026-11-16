@@ -12,7 +12,7 @@ export type IfcElement = {
   kind: IfcElementKind
   floor: string
   material: string
-  /** Exported IFC volume quantity in m³; null when absent or its unit is unknown. */
+  /** Pset 체적/Volume single-value property in m³; null when absent or its unit is unknown. */
   volume: number | null
   properties: IfcProperty[]
 }

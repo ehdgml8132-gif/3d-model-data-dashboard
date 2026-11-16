@@ -78,7 +78,7 @@ async function connectCsv(page: Page) {
   await expect(dialog).toHaveCount(0)
 }
 
-test('official IFC geometry imports with real storeys, materials, properties and cubic-metre quantities', async ({
+test('official IFC geometry uses Revit-style Pset volumes for member cards, tables and totals', async ({
   page,
 }) => {
   const errors: string[] = []
@@ -93,7 +93,14 @@ test('official IFC geometry imports with real storeys, materials, properties and
       external.push(request.url())
   })
   await openBuilding(page)
-  await importIfc(page)
+  const source = await readFile(fixture, 'utf8')
+  // Deliberately disagree with the column's Pset value: Qto must not supply the volume.
+  const conflictingQto = source.replace(
+    "#49=IFCQUANTITYVOLUME('NetVolume','Declared volume in cubic metres',#15,0.589048623,$);",
+    "#49=IFCQUANTITYVOLUME('NetVolume','Declared volume in cubic metres',#15,99.,$);",
+  )
+  expect(conflictingQto).not.toBe(source)
+  await importIfc(page, 'pset-volume.ifc', Buffer.from(conflictingQto))
   const canvas = page.getByLabel('IFC 모델 3D 뷰어', { exact: true })
   await expect(canvas).toBeVisible()
   expect(
@@ -106,10 +113,20 @@ test('official IFC geometry imports with real storeys, materials, properties and
   await expect(detail(page)).toContainText('Concrete C30/37')
   await expect(detail(page)).toContainText('Ground floor')
   await expect(detail(page)).toContainText('R120')
-  // The round column's bounding box is 0.75 m³; its IFC NetVolume is 0.589048623 m³.
-  // Its project length unit is millimetres, while this quantity explicitly uses m³.
+  // The round column's bounding box is 0.75 m³ and Qto now says 99 m³.
+  // Its Pset 체적 is 0.589048623 m³; the project length unit remains millimetres.
   await expect(page.getByTestId('building-selected-volume')).toContainText('0.59')
   await expect(detail(page)).not.toContainText('0.75')
+  await expect(
+    members(page).locator('tbody tr').filter({ hasText: columnName }).locator('td').last(),
+  ).toHaveText('0.59')
+  await expect(
+    page
+      .getByRole('region', { name: '건물 집계 지표' })
+      .locator('article')
+      .filter({ has: page.getByText('총 체적', { exact: true }) })
+      .locator(':scope > strong'),
+  ).toHaveText('10.83 m³')
   // Unmount and remount the viewer twice under the app's React StrictMode.
   // The subsequent real pointer pick proves disposed GPU state is rebuilt.
   const menu = page.getByRole('navigation', { name: '건물 메뉴', exact: true })
@@ -281,16 +298,16 @@ test('invalid IFC preserves the active model and linked rows, while a successful
   await expect(detail(page)).not.toContainText('Installed')
 })
 
-test('an IFC member without exported volume remains unknown rather than receiving its bounding-box volume', async ({
+test('an IFC member without Pset volume stays unknown even when Qto volume exists', async ({
   page,
 }) => {
   const source = await readFile(fixture, 'utf8')
-  // Disconnect only the beam's quantity relationship. Geometry and ordinary Pset
-  // relationships remain intact; the official web-ifc fixture check covers it.
-  const withoutBeamQuantity = source.replace(/^#115=IFCRELDEFINESBYPROPERTIES[^\n]*\n/m, '')
-  expect(withoutBeamQuantity).not.toBe(source)
+  // Remove only the beam's 체적 property reference; its Qto, geometry and other
+  // Pset values stay intact. Neither Qto nor a bounding box may fill the gap.
+  const withoutBeamVolume = source.replace('(#109,#110,#204)', '(#109,#110)')
+  expect(withoutBeamVolume).not.toBe(source)
   await openBuilding(page)
-  await importIfc(page, 'missing-volume.ifc', Buffer.from(withoutBeamQuantity))
+  await importIfc(page, 'missing-volume.ifc', Buffer.from(withoutBeamVolume))
   await members(page)
     .getByRole('button', { name: /Steel beam 1.*선택$/ })
     .click()

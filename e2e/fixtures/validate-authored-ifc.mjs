@@ -78,6 +78,22 @@ try {
       ),
     ),
   )
+  const expectedVolumes = new Map([
+    [44, 0.589048623],
+    [60, 3.6],
+    [76, 0.589048623],
+    [92, 4.8],
+    [108, 1.25],
+  ])
+  for (const element of elements) {
+    const sets = await api.properties.getPropertySets(model, element.expressID, true)
+    const volume = sets
+      .flatMap((set) => set.HasProperties || [])
+      .find((property) => property.Name?.value === '체적')
+    assert.ok(volume, 'every member has an independent Revit-style Pset 체적 property')
+    assert.equal(volume.NominalValue.value, expectedVolumes.get(element.expressID))
+    assert.equal(volume.NominalValue.name, 'IFCVOLUMEMEASURE')
+  }
 
   let meshCount = 0
   let triangles = 0
@@ -157,17 +173,23 @@ try {
     globalIds.sort(),
   )
   assert.equal(rows[1][1], '0001')
-  // A valid derivative removes only the beam-to-Qto relation, preserving its actual geometry.
-  const withoutBeamQuantity = (await readFile(source, 'utf8')).replace(
-    /^#115=IFCRELDEFINESBYPROPERTIES[^\n]*\n/m,
-    '',
+  // A valid derivative removes only the beam's Pset 체적 reference. Qto remains
+  // present to prove a missing property is not repaired with a quantity fallback.
+  const withoutBeamVolume = (await readFile(source, 'utf8')).replace(
+    '(#109,#110,#204)',
+    '(#109,#110)',
   )
-  const derivative = api.OpenModel(new TextEncoder().encode(withoutBeamQuantity))
+  const derivative = api.OpenModel(new TextEncoder().encode(withoutBeamVolume))
   try {
     assert.ok(derivative >= 0)
     const beamSets = await api.properties.getPropertySets(derivative, 108, true)
     assert.ok(beamSets.some((pset) => pset.Name.value === 'Pset_DemoCommon'))
-    assert.ok(!beamSets.some((pset) => pset.Name.value === 'Qto_DemoBaseQuantities'))
+    assert.ok(beamSets.some((pset) => pset.Name.value === 'Qto_DemoBaseQuantities'))
+    assert.ok(
+      !beamSets.some((pset) =>
+        pset.HasProperties?.some((property) => property.Name?.value === '체적'),
+      ),
+    )
     let derivativeMeshCount = 0
     api.StreamAllMeshes(derivative, () => {
       derivativeMeshCount += 1
@@ -175,7 +197,7 @@ try {
     assert.equal(
       derivativeMeshCount,
       5,
-      'missing declared quantity must not remove real beam geometry',
+      'missing volume property must not remove real beam geometry',
     )
   } finally {
     api.CloseModel(derivative)
@@ -190,7 +212,7 @@ try {
       cylinderVertices,
       cylinderBoundsMetres: cylinderBounds,
       cylinderBBoxVolume,
-      declaredCylinderVolume: 0.589048623,
+      propertyCylinderVolume: 0.589048623,
       matchedCsvRows: rows.length - 1,
     }),
   )

@@ -113,6 +113,46 @@ function kindOf(name: string): IfcElementKind {
   return 'other'
 }
 
+// Revit can export the parameter as a typed measure or as formatted text.
+// Only complete numbers (with optional thousands separators) and known cubic
+// units are accepted; parseFloat would silently accept malformed values.
+function parsePropertyVolume(value: unknown): { raw: number; unit?: Unit } | undefined {
+  const nominalType = scalar((value as Line | undefined)?.name).toUpperCase()
+  if (
+    nominalType &&
+    ![
+      'IFCVOLUMEMEASURE',
+      'IFCREAL',
+      'IFCINTEGER',
+      'IFCNUMBER',
+      'IFCNUMERICMEASURE',
+      'IFCLABEL',
+      'IFCTEXT',
+      'IFCIDENTIFIER',
+    ].includes(nominalType)
+  )
+    return undefined
+  const match = scalar(value)
+    .trim()
+    .match(/^([+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*(.*)$/)
+  if (!match) return undefined
+  const raw = Number(match[1].replaceAll(',', ''))
+  if (!Number.isFinite(raw) || raw < 0) return undefined
+  if (!match[2]) return { raw }
+  const symbol = match[2].normalize('NFKC').toLowerCase().replace(/\s/g, '').replace(/\^3$/, '3')
+  const factors: Record<string, number> = {
+    m3: 1,
+    mm3: 1e-9,
+    cm3: 1e-6,
+    dm3: 1e-3,
+    ft3: 0.028316846592,
+    in3: 0.000016387064,
+  }
+  const factor = factors[symbol]
+  if (factor === undefined) return undefined
+  return { raw, unit: { factor, dimension: 3, label: symbol.replace(/3$/, '³') } }
+}
+
 /** Extracts a fully owned JS snapshot; no WASM views survive model disposal. */
 export function extractIfcModel(
   api: WebIFC.IfcAPI,
@@ -457,7 +497,7 @@ export function extractIfcModel(
   let propertyText = 0
   let cachedPropertyText = 0
   let propertiesCapped = false
-  let missingVolumeUnit = false
+  let unreadableVolumeProperty = false
   const setCache = new Map<number, PropertySet>()
   function readSet(id: number): PropertySet {
     const cached = setCache.get(id)
@@ -481,16 +521,9 @@ export function extractIfcModel(
       const explicitUnit = prop.Unit ? readUnit(prop.Unit) : undefined
       let propertyUnitLabel = prop.Unit ? unitLabel(prop.Unit) : ''
       if (prop.VolumeValue != null) {
-        const raw = Number(scalar(prop.VolumeValue))
-        const unit = prop.Unit ? explicitUnit : volumeUnit
-        propertyUnitLabel = unit?.label || propertyUnitLabel
-        if (unit?.dimension === 3 && Number.isFinite(raw) && raw >= 0) {
-          const normalizedName = scalar(prop.Name).replace(/[ _-]/g, '').toLowerCase()
-          const priority =
-            normalizedName === 'netvolume' ? 0 : normalizedName === 'grossvolume' ? 1 : 2
-          const value = raw * unit.factor
-          if (Number.isFinite(value)) result.volumes.push({ value, priority })
-        } else missingVolumeUnit = true
+        // Qto/BaseQuantities remain visible in the property list, but never
+        // supply the dashboard volume or serve as a fallback for a missing Pset.
+        propertyUnitLabel = prop.Unit ? propertyUnitLabel : defaultUnitLabel('VOLUMEUNIT')
       } else if (!prop.Unit) {
         const nominalType = scalar((prop.NominalValue as Line | undefined)?.name)
         const unitType =
@@ -508,6 +541,26 @@ export function extractIfcModel(
                       ? 'PLANEANGLEUNIT'
                       : ''
         propertyUnitLabel = defaultUnitLabel(unitType)
+      }
+      if (
+        item.type === WebIFC.IFCPROPERTYSET &&
+        prop.type === WebIFC.IFCPROPERTYSINGLEVALUE &&
+        /^(체적|volume)$/i.test(scalar(prop.Name).trim().normalize('NFC'))
+      ) {
+        const parsed = parsePropertyVolume(prop.NominalValue)
+        const unit = prop.Unit ? explicitUnit : parsed?.unit || volumeUnit
+        const consistentUnits =
+          !prop.Unit ||
+          !parsed?.unit ||
+          (explicitUnit &&
+            Math.abs(explicitUnit.factor - parsed.unit.factor) <= parsed.unit.factor * 1e-8)
+        if (parsed && unit?.dimension === 3 && consistentUnits) {
+          const value = parsed.raw * unit.factor
+          if (Number.isFinite(value)) {
+            result.volumes.push({ value, priority: 0 })
+            propertyUnitLabel = parsed.unit ? '' : unit.label
+          } else unreadableVolumeProperty = true
+        } else unreadableVolumeProperty = true
       }
       const add = (label: string, value: unknown) => {
         const raw = scalar(value)
@@ -600,7 +653,7 @@ export function extractIfcModel(
         for (const property of set.properties) {
           addProperty({ ...property, group: source.prefix + property.group })
         }
-        // A type quantity describes its type; an occurrence quantity takes precedence.
+        // An occurrence's Revit parameter takes precedence over its type parameter.
         for (const volume of set.volumes)
           volumeCandidates.push({ ...volume, priority: volume.priority + (source.type ? 10 : 0) })
       }
@@ -618,7 +671,7 @@ export function extractIfcModel(
           element.volume = best.value
         else
           warnings.add(
-            '동일 부재에 서로 다른 체적 수량이 있어 해당 체적을 미지정으로 표시했습니다.',
+            '동일 부재에 서로 다른 Pset 체적 값이 있어 해당 체적을 미지정으로 표시했습니다.',
           )
       }
     } catch {
@@ -634,10 +687,12 @@ export function extractIfcModel(
     warnings.add(
       '속성 표시 한도를 초과하여 일부 속성·긴 값을 생략했습니다. (부재당 500개, 속성 텍스트 40 MB)',
     )
-  if (missingVolumeUnit)
-    warnings.add('단위를 확인할 수 없는 IFC 체적 수량은 미지정으로 표시했습니다.')
+  if (unreadableVolumeProperty)
+    warnings.add('일부 Pset 체적 값이나 단위를 확인할 수 없어 해당 값은 사용하지 않았습니다.')
   if (elements.some((element) => element.volume === null))
-    warnings.add('체적은 IFC에 내보낸 수량만 사용합니다. 수량이 없는 부재는 미지정으로 표시됩니다.')
+    warnings.add(
+      '체적은 Pset의 체적(Revit) 또는 Volume 속성만 사용합니다. 값이나 단위를 확인할 수 없는 부재는 미지정으로 표시됩니다.',
+    )
   return {
     source: 'ifc',
     name,

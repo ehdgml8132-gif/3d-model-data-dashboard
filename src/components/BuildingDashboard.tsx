@@ -550,7 +550,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                     ? formatVolume(summary.totalVolume)
                     : '—',
                 note: ifcModel
-                  ? `수량 있는 ${summary.knownVolumeCount}개 합계 · ${summary.missingVolumeCount}개 미제공`
+                  ? `체적 확인 ${summary.knownVolumeCount}개 합계 · ${summary.missingVolumeCount}개 미확인`
                   : '부재별 형상 체적의 합계',
                 icon: Cuboid,
                 color: 'blue',
@@ -713,8 +713,8 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                       <p>
                         {ifcModel
                           ? selected.volume === null
-                            ? 'IFC에 체적 수량이 제공되지 않았습니다.'
-                            : 'IFC 수량 속성에서 읽은 체적입니다.'
+                            ? 'Pset의 체적·Volume 값 또는 단위를 확인할 수 없습니다.'
+                            : 'Pset 체적·Volume 속성을 m³로 환산한 값입니다.'
                           : '모형 치수에서 계산한 예제 물량'}
                       </p>
                     </div>
@@ -889,7 +889,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                       <small>
                         {row.count}개 부재
                         {ifcModel && row.count > row.knownVolumeCount
-                          ? ` · ${row.count - row.knownVolumeCount}개 수량 미제공`
+                          ? ` · ${row.count - row.knownVolumeCount}개 체적 미확인`
                           : ''}
                       </small>
                     </div>
@@ -903,9 +903,9 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                   <span>
                     {ifcModel ? (
                       <>
-                        IFC에 제공된 체적 수량만 합산합니다.
+                        Pset 체적·Volume을 m³로 환산해 합산합니다.
                         <br />
-                        수량이 없는 부재는 —로 표시하며 형상으로 추정하지 않습니다.
+                        속성값이나 단위를 확인할 수 없는 부재는 —로 표시합니다.
                       </>
                     ) : (
                       <>

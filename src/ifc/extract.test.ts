@@ -31,6 +31,23 @@ function parse(text = source) {
   }
 }
 
+const koreanVolume = '\\X2\\CCB4C801\\X0\\'
+const beamProperty =
+  "#204=IFCPROPERTYSINGLEVALUE('" + koreanVolume + "',$,IFCVOLUMEMEASURE(1.25),#15);"
+
+function withBeamVolume(nominal: string, unit = '$', name = koreanVolume) {
+  return source.replace(
+    beamProperty,
+    "#204=IFCPROPERTYSINGLEVALUE('" + name + "',$," + nominal + ',' + unit + ');',
+  )
+}
+function append(text: string, lines: string[]) {
+  return text.replace('ENDSEC;\nEND-ISO', [...lines, 'ENDSEC;\nEND-ISO'].join('\n'))
+}
+function beamVolume(text: string) {
+  return parse(text).elements.find((element) => element.expressId === 108)?.volume
+}
+
 describe('official web-ifc extraction', () => {
   it('extracts real curved geometry, storeys, materials and IFC properties', () => {
     const model = parse()
@@ -52,6 +69,11 @@ describe('official web-ifc extraction', () => {
       group: 'Pset_DemoCommon',
       name: 'FireRating',
       value: 'R120',
+    })
+    expect(column.properties).toContainEqual({
+      group: 'Pset_DemoCommon',
+      name: '체적',
+      value: '0.589048623 m³',
     })
     const mesh = model.meshes.find((mesh) => mesh.elementId === column.id)!
     expect(mesh.positions.length / 3).toBeGreaterThan(24)
@@ -76,7 +98,7 @@ describe('official web-ifc extraction', () => {
     expect(dimensions[2]).toBeCloseTo(0.5, 1)
   })
 
-  it('keeps explicit cubic-metre quantities independent of millimetre length units', () => {
+  it('keeps explicit cubic-metre properties independent of millimetre length units', () => {
     const model = parse()
     expect(model.elements.find((element) => element.expressId === 108)?.volume).toBe(1.25)
   })
@@ -100,23 +122,14 @@ describe('official web-ifc extraction', () => {
     expect(repeated.matrix).not.toEqual(first.matrix)
   })
 
-  it('converts an explicit cubic-millimetre quantity exactly once', () => {
-    const text = source
-      .replace(
-        "#113=IFCQUANTITYVOLUME('NetVolume','Declared volume in cubic metres',#15,1.25,$);",
-        "#113=IFCQUANTITYVOLUME('NetVolume',$,#119,1250000000.,$);",
-      )
-      .replace(
-        'ENDSEC;\nEND-ISO',
-        '#119=IFCSIUNIT(*,.VOLUMEUNIT.,.MILLI.,.CUBIC_METRE.);\nENDSEC;\nEND-ISO',
-      )
-    expect(parse(text).elements.find((element) => element.expressId === 108)?.volume).toBeCloseTo(
-      1.25,
-      8,
-    )
+  it('converts an explicit cubic-millimetre property exactly once', () => {
+    const text = append(withBeamVolume('IFCVOLUMEMEASURE(1250000000.)', '#119'), [
+      '#119=IFCSIUNIT(*,.VOLUMEUNIT.,.MILLI.,.CUBIC_METRE.);',
+    ])
+    expect(beamVolume(text)).toBeCloseTo(1.25, 8)
   })
 
-  it('shows project units for typed property values without guessing occurrence quantities', () => {
+  it('shows project units for unrelated typed properties without using them as volume', () => {
     const text = source.replace("IFCLABEL('R120')", 'IFCLENGTHMEASURE(500.)')
     const column = parse(text).elements.find((element) => element.expressId === 44)!
     expect(column.properties).toContainEqual({
@@ -127,11 +140,11 @@ describe('official web-ifc extraction', () => {
     expect(column.volume).toBe(0.589048623)
   })
 
-  it('shows null for missing quantities and for unknown volume units', () => {
-    const withoutBeamQto = source.replace(/#115=IFCRELDEFINESBYPROPERTIES[^\n]+\n/, '')
-    const model = parse(withoutBeamQto)
+  it('shows null for a missing 체적 property and for unknown volume units', () => {
+    const withoutBeamVolume = source.replace('(#109,#110,#204)', '(#109,#110)')
+    const model = parse(withoutBeamVolume)
     expect(model.elements.find((element) => element.expressId === 108)?.volume).toBeNull()
-    expect(model.warnings.some((warning) => warning.includes('수량이 없는'))).toBe(true)
+    expect(model.warnings.some((warning) => warning.includes('체적'))).toBe(true)
     const unknown = source.replace(
       '#15=IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.);',
       "#15=IFCCONTEXTDEPENDENTUNIT($,.VOLUMEUNIT.,'Unknown volume unit');",
@@ -165,4 +178,139 @@ describe('official web-ifc extraction', () => {
       )
     },
   )
+})
+
+describe('Revit property-set volume extraction', () => {
+  it('uses a Revit 체적 property even when Qto/BaseQuantities disagrees', () => {
+    const text = source.replace(
+      "#113=IFCQUANTITYVOLUME('NetVolume','Declared volume in cubic metres',#15,1.25,$);",
+      "#113=IFCQUANTITYVOLUME('NetVolume','Different Qto value',#15,999.,$);",
+    )
+    const beam = parse(text).elements.find((element) => element.expressId === 108)!
+    expect(beam.volume).toBe(1.25)
+    expect(beam.properties).toContainEqual({
+      group: 'Qto_DemoBaseQuantities',
+      name: 'NetVolume',
+      value: '999 m³',
+    })
+  })
+
+  it('does not use Qto volumes when all Revit 체적 properties are absent', () => {
+    const text = [200, 201, 202, 203, 204].reduce(
+      (text, id) => text.replace(',#' + id + ')', ')'),
+      source,
+    )
+    const model = parse(text)
+    expect(model.elements.every((element) => element.volume === null)).toBe(true)
+    expect(
+      model.elements.every((element) =>
+        element.properties.some((property) => property.name === 'NetVolume'),
+      ),
+    ).toBe(true)
+  })
+
+  it.each([
+    ['IFCREAL(2.5)', '$', koreanVolume, 2.5],
+    ['IFCVOLUMEMEASURE(2.5)', '$', 'Volume', 2.5],
+    ['IFCVOLUMEMEASURE(2.5)', '$', 'volume', 2.5],
+    ["IFCTEXT('1.25 m³')", '$', koreanVolume, 1.25],
+    ["IFCLABEL('1,250.5 m3')", '$', koreanVolume, 1250.5],
+    ["IFCLABEL('1,250,000,000 mm³')", '$', koreanVolume, 1.25],
+    ["IFCTEXT('1250000 cm³')", '$', koreanVolume, 1.25],
+    ['IFCVOLUMEMEASURE(0.)', '$', koreanVolume, 0],
+  ] as const)('reads numeric or formatted Revit property %s', (nominal, unit, name, expected) => {
+    expect(beamVolume(withBeamVolume(nominal, unit, name))).toBeCloseTo(expected, 8)
+  })
+
+  it('converts implicit values using the project volume unit, independently of length', () => {
+    const text = withBeamVolume('IFCREAL(1250000000.)').replace(
+      '#15=IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.);',
+      '#15=IFCSIUNIT(*,.VOLUMEUNIT.,.MILLI.,.CUBIC_METRE.);',
+    )
+    expect(beamVolume(text)).toBeCloseTo(1.25, 8)
+  })
+
+  it('uses an explicit property unit before the project volume unit', () => {
+    const text = append(
+      withBeamVolume('IFCVOLUMEMEASURE(1.25)', '#119').replace(
+        '#15=IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.);',
+        '#15=IFCSIUNIT(*,.VOLUMEUNIT.,.MILLI.,.CUBIC_METRE.);',
+      ),
+      ['#119=IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.);'],
+    )
+    expect(beamVolume(text)).toBe(1.25)
+  })
+
+  it('reads 체적 nested in a complex Revit property', () => {
+    const text = append(source.replace('(#109,#110,#204)', '(#109,#110,#205)'), [
+      "#205=IFCCOMPLEXPROPERTY('Dimensions',$,'Dimensions',(#204));",
+    ])
+    expect(beamVolume(text)).toBe(1.25)
+  })
+
+  it.each([
+    ["IFCLABEL('')", '$', koreanVolume],
+    ["IFCLABEL('unknown')", '$', koreanVolume],
+    ["IFCLABEL('NaN')", '$', koreanVolume],
+    ["IFCLABEL('Infinity')", '$', koreanVolume],
+    ["IFCLABEL('1,25 m³')", '$', koreanVolume],
+    ["IFCLABEL('1.25 m²')", '$', koreanVolume],
+    ['IFCVOLUMEMEASURE(-1.)', '$', koreanVolume],
+    ['IFCLENGTHMEASURE(1.25)', '$', koreanVolume],
+    ['IFCVOLUMEMEASURE(1.25)', '#13', koreanVolume],
+    ['IFCVOLUMEMEASURE(1.25)', '$', 'NetVolume'],
+    ['IFCVOLUMEMEASURE(1.25)', '$', '\\X2\\CCB4C8010020D569ACC4\\X0\\'],
+  ])('does not guess volumes for invalid property %s (%s, %s)', (nominal, unit, name) => {
+    expect(beamVolume(withBeamVolume(nominal, unit, name))).toBeNull()
+  })
+
+  it('rejects inconsistent explicit and formatted text volume units', () => {
+    expect(beamVolume(withBeamVolume("IFCLABEL('1250000000 mm³')", '#15'))).toBeNull()
+  })
+
+  it('uses text volume units when the project volume unit is unavailable', () => {
+    const text = withBeamVolume("IFCLABEL('1.25 m³')").replace(
+      '#15=IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.);',
+      "#15=IFCCONTEXTDEPENDENTUNIT($,.VOLUMEUNIT.,'Unknown volume unit');",
+    )
+    expect(beamVolume(text)).toBe(1.25)
+  })
+
+  it('does not fall back to project units when a property has an unknown explicit unit', () => {
+    const text = append(withBeamVolume('IFCVOLUMEMEASURE(1.25)', '#119'), [
+      "#119=IFCCONTEXTDEPENDENTUNIT($,.VOLUMEUNIT.,'Unknown volume unit');",
+    ])
+    expect(beamVolume(text)).toBeNull()
+  })
+
+  it('prefers occurrence properties and uses the type property when absent', () => {
+    const text = append(source.replace('(#77,#78,#202)', '(#77,#78)'), [
+      "#205=IFCPROPERTYSINGLEVALUE('" + koreanVolume + "',$,IFCVOLUMEMEASURE(2.5),#15);",
+      "#206=IFCPROPERTYSET('0J4FUqfnH4JfJ1O84e9Xp0',#5,'Revit Type Dimensions',$,(#205));",
+      "#207=IFCCOLUMNTYPE('0J4FUqfnH4JfJ1O84e9Xp1',#5,'Column type',$,$,(#206),$,$,$,.NOTDEFINED.);",
+      "#208=IFCRELDEFINESBYTYPE('0J4FUqfnH4JfJ1O84e9Xp2',#5,$,$,(#44,#76),#207);",
+    ])
+    const model = parse(text)
+    expect(model.elements.find((element) => element.expressId === 44)?.volume).toBe(0.589048623)
+    expect(model.elements.find((element) => element.expressId === 76)?.volume).toBe(2.5)
+  })
+
+  it('keeps conflicting occurrence properties unspecified rather than choosing arbitrarily', () => {
+    const text = append(source.replace('(#109,#110,#204)', '(#109,#110,#204,#205)'), [
+      "#205=IFCPROPERTYSINGLEVALUE('" + koreanVolume + "',$,IFCVOLUMEMEASURE(2.5),#15);",
+    ])
+    const model = parse(text)
+    expect(model.elements.find((element) => element.expressId === 108)?.volume).toBeNull()
+    expect(
+      model.warnings.some((warning) => warning.includes('서로 다른') && warning.includes('체적')),
+    ).toBe(true)
+  })
+
+  it('accepts duplicate properties when their normalized volumes agree', () => {
+    const text = append(source.replace('(#109,#110,#204)', '(#109,#110,#204,#205)'), [
+      "#205=IFCPROPERTYSINGLEVALUE('" + koreanVolume + "',$,IFCVOLUMEMEASURE(1250000000.),#119);",
+      '#119=IFCSIUNIT(*,.VOLUMEUNIT.,.MILLI.,.CUBIC_METRE.);',
+    ])
+    expect(beamVolume(text)).toBeCloseTo(1.25, 8)
+  })
 })
