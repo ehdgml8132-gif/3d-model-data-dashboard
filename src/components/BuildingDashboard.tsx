@@ -2,6 +2,7 @@ import {
   Component,
   Suspense,
   lazy,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -142,6 +143,10 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
     null,
   )
   const [sectionBoxSelected, setSectionBoxSelected] = useState(false)
+  const clearSelection = useCallback(() => {
+    setSelectedId('')
+    setSectionBoxSelected(false)
+  }, [setSelectedId])
   const [resetKey, setResetKey] = useState(0)
   const [ifcModel, setIfcModel] = useSessionState<IfcModel | null>('building:model', null)
   const [modelVersion, setModelVersion] = useState(0)
@@ -195,13 +200,12 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
   useEffect(() => setTablePage(0), [ifcModel, floor, activeView, kind, query])
   useEffect(() => setSectionBoxSelected(false), [activeView])
   useEffect(() => {
-    if (!sectionBoxSelected) return
     const deselect = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSectionBoxSelected(false)
+      if (event.key === 'Escape' && !document.querySelector('dialog[open]')) clearSelection()
     }
     window.addEventListener('keydown', deselect, true)
     return () => window.removeEventListener('keydown', deselect, true)
-  }, [sectionBoxSelected])
+  }, [clearSelection])
   useEffect(
     () => () => {
       importRequest.current?.controller.abort()
@@ -632,10 +636,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                         className="building-clear-selection"
                         aria-label="선택 해제"
                         disabled={!selected && !sectionBoxSelected}
-                        onClick={() => {
-                          setSelectedId('')
-                          setSectionBoxSelected(false)
-                        }}
+                        onClick={clearSelection}
                       >
                         <X size={13} /> 선택 해제
                       </button>
@@ -704,7 +705,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                               onSectionBoxChange={setSectionBox}
                               sectionBoxSelected={sectionBoxSelected}
                               onSectionBoxSelect={() => setSectionBoxSelected(true)}
-                              onSectionBoxDeselect={() => setSectionBoxSelected(false)}
+                              onSectionBoxDeselect={clearSelection}
                             />
                           ) : (
                             <BuildingScene
@@ -717,7 +718,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                               onSectionBoxChange={setSectionBox}
                               sectionBoxSelected={sectionBoxSelected}
                               onSectionBoxSelect={() => setSectionBoxSelected(true)}
-                              onSectionBoxDeselect={() => setSectionBoxSelected(false)}
+                              onSectionBoxDeselect={clearSelection}
                             />
                           )}
                         </Suspense>

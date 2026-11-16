@@ -73,6 +73,15 @@ test('building sample starts with a live WebGL model and no selected member', as
   )
   await expect(page.getByRole('textbox', { name: '부재 검색', exact: true })).toHaveCount(0)
   await expect(page.getByLabel('부재 종류', { exact: true })).toHaveCount(0)
+  const member = buildingList(page).getByRole('button', { name: /^1F-C09.*선택$/ })
+  await member.click()
+  await expect(buildingDetail(page)).toContainText('1F-C09')
+  await canvas.click({ position: { x: 12, y: 12 } })
+  await expectNoBuildingSelection(page)
+  await member.click()
+  await expect(buildingDetail(page)).toContainText('1F-C09')
+  await page.keyboard.press('Escape')
+  await expectNoBuildingSelection(page)
   expect(errors).toEqual([])
 })
 
@@ -206,6 +215,7 @@ test('a real 3D building member click selects its matching data', async ({ page 
     steps: 8,
   })
   await page.mouse.up()
+  await expect(buildingDetail(page)).toContainText('1F-C01')
   await page.getByRole('button', { name: '3D 건물 시점 초기화', exact: true }).click()
   const bounds = (await canvas.boundingBox())!
   // Project the front right first-floor column through the actual default camera.
