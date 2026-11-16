@@ -42,6 +42,13 @@ import { MAX_IFC_FILE_BYTES } from '../ifc/limits'
 import type { IfcModel } from '../ifc/types'
 import BusinessDataPanel, { type BusinessConnection } from './BusinessDataPanel'
 import BuildingAnalytics, { BuildingAnalyticsNote } from './BuildingAnalytics'
+import BuildingMetricFilter from './BuildingMetricFilter'
+import {
+  createBuildingMetricFilters,
+  filterBuildingMetricElements,
+  hasBuildingMetricFilters,
+  type BuildingMetricFilters,
+} from '../lib/buildingFilters'
 import { fullSectionRanges, type SectionBoxSettings } from '../lib/sectionBox'
 import { useSessionState } from '../lib/useSessionState'
 import './building.css'
@@ -133,7 +140,11 @@ class BuildingSceneBoundary extends Component<{ children: ReactNode }, { failed:
 }
 
 export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () => void }) {
-  const [floor, setFloor] = useSessionState('building:floor', 'all')
+  const [metricFilters, setMetricFilters] = useSessionState<BuildingMetricFilters>(
+    'building:metric-filters',
+    createBuildingMetricFilters,
+  )
+  const floor = metricFilters.floors?.length === 1 ? metricFilters.floors[0] : 'all'
   const [activeView, setActiveView] = useSessionState<'space' | 'data'>('building:view', 'space')
   const [kind, setKind] = useSessionState<DisplayKind | 'all'>('building:kind', 'all')
   const [query, setQuery] = useSessionState('building:query', '')
@@ -167,38 +178,47 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
     [ifcModel],
   )
   const floors = useMemo(() => [...new Set(elements.map((element) => element.floor))], [elements])
-  const floorElements = useMemo(
-    () => elements.filter((element) => floor === 'all' || element.floor === floor),
-    [elements, floor],
+  const spatialElements = useMemo(
+    () => filterBuildingMetricElements(elements, metricFilters),
+    [elements, metricFilters],
   )
   const dataElements = useMemo(
     () =>
-      floorElements.filter(
+      spatialElements.filter(
         (element) =>
           (kind === 'all' || element.kind === kind) &&
           `${element.id} ${element.name} ${element.ifcClass} ${element.material} ${element.globalId} ${element.tag ?? ''}`
             .toLocaleLowerCase()
             .includes(query.toLocaleLowerCase().trim()),
       ),
-    [floorElements, kind, query],
+    [spatialElements, kind, query],
   )
-  const visible = activeView === 'data' ? dataElements : floorElements
+  const visible = activeView === 'data' ? dataElements : spatialElements
   const pageCount = ifcModel ? Math.max(1, Math.ceil(visible.length / IFC_TABLE_PAGE_SIZE)) : 1
   const currentPage = Math.min(tablePage, pageCount - 1)
   const tableElements = ifcModel
     ? visible.slice(currentPage * IFC_TABLE_PAGE_SIZE, (currentPage + 1) * IFC_TABLE_PAGE_SIZE)
     : visible
-  const selected = selectedId
-    ? (floorElements.find((element) => element.id === selectedId) ?? floorElements[0])
-    : undefined
+  const selected = spatialElements.find((element) => element.id === selectedId)
   const summary = useMemo(() => summarize(visible), [visible])
   const fullSummary = useMemo(() => summarize(elements), [elements])
   const maxKindVolume = Math.max(1, ...summary.byKind.map((row) => row.volume))
+  const hasMetricFilters = hasBuildingMetricFilters(metricFilters)
+  const filterLabels = [
+    metricFilters.kinds !== null ? `부재 종류 ${metricFilters.kinds.length}개` : '',
+    metricFilters.elementIds !== null ? `개별 부재 ${metricFilters.elementIds.length}개` : '',
+    metricFilters.floors !== null ? `층 ${metricFilters.floors.length}개` : '',
+    metricFilters.materials !== null ? `재료 ${metricFilters.materials.length}개` : '',
+    metricFilters.volume.min !== null || metricFilters.volume.max !== null
+      ? `체적 ${metricFilters.volume.min ?? 0} ~ ${metricFilters.volume.max ?? '제한 없음'} m³`
+      : '',
+    !metricFilters.volume.includeUnknown ? '체적 미확인 제외' : '',
+  ].filter(Boolean)
   useEffect(() => {
-    if (selected && selected.id !== selectedId) setSelectedId(selected.id)
-  }, [selected, selectedId])
-  useEffect(() => setTablePage(0), [ifcModel, floor, activeView, kind, query])
-  useEffect(() => setSectionBoxSelected(false), [activeView])
+    if (selectedId && !selected) clearSelection()
+  }, [selected, selectedId, clearSelection])
+  useEffect(() => setTablePage(0), [ifcModel, metricFilters, activeView, kind, query])
+  useEffect(() => setSectionBoxSelected(false), [activeView, metricFilters])
   useEffect(() => {
     const deselect = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !document.querySelector('dialog[open]')) clearSelection()
@@ -304,7 +324,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
   const visibleIfcIds = useMemo(() => visible.map((element) => element.id), [visible])
 
   function clearFilters() {
-    setFloor('all')
+    setMetricFilters(createBuildingMetricFilters())
     setKind('all')
     setQuery('')
   }
@@ -547,30 +567,31 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
               <span>표시할 층</span>
               <div className="building-floor-buttons" role="group" aria-label="건물 층 선택">
                 <button
-                  className={floor === 'all' ? 'active' : ''}
-                  aria-pressed={floor === 'all'}
-                  onClick={() => setFloor('all')}
+                  className={metricFilters.floors === null ? 'active' : ''}
+                  aria-pressed={metricFilters.floors === null}
+                  onClick={() => setMetricFilters((current) => ({ ...current, floors: null }))}
                 >
                   전체
                 </button>
                 {floors.map((value) => (
                   <button
                     key={value}
-                    className={floor === value ? 'active' : ''}
-                    aria-pressed={floor === value}
-                    onClick={() => setFloor(value)}
+                    className={metricFilters.floors?.includes(value) ? 'active' : ''}
+                    aria-pressed={metricFilters.floors?.includes(value) ?? false}
+                    onClick={() => setMetricFilters((current) => ({ ...current, floors: [value] }))}
                   >
                     {floorLabel(value)}
                   </button>
                 ))}
               </div>
             </div>
-            <span className="building-filter-note">현재 표시된 부재 기준으로 집계합니다.</span>
+            <span className="building-filter-note">카드 아이콘을 눌러 표시 조건을 선택하세요.</span>
           </div>
           <section className="metrics building-metrics" aria-label="건물 집계 지표">
             {[
               {
                 label: '표시 부재',
+                filterKey: 'members' as const,
                 value: `${summary.elementCount}개`,
                 note: `전체 ${fullSummary.elementCount}개 중 현재 조건`,
                 icon: Box,
@@ -578,6 +599,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
               },
               {
                 label: '총 체적',
+                filterKey: 'volume' as const,
                 value:
                   summary.elementCount === 0 || summary.knownVolumeCount > 0
                     ? formatVolume(summary.totalVolume)
@@ -590,6 +612,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
               },
               {
                 label: '표시 층',
+                filterKey: 'floors' as const,
                 value: `${summary.floorCount}개 층`,
                 note: ifcModel ? 'IFC의 층 분류 기준 · 미지정 포함' : '지상 1층부터 3층까지',
                 icon: Layers3,
@@ -597,6 +620,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
               },
               {
                 label: ifcModel ? '재료 표기' : '재료 종류',
+                filterKey: 'materials' as const,
                 value: `${summary.byMaterial.length}종`,
                 note: ifcModel ? '부재에 기록된 서로 다른 재료 표기' : '현재 표시된 부재의 재료',
                 icon: Shapes,
@@ -606,9 +630,15 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
               <article key={metric.label} className="metric-card">
                 <div className="metric-top">
                   <span>{metric.label}</span>
-                  <span className={`metric-icon ${metric.color}`}>
-                    <metric.icon size={18} strokeWidth={1.7} />
-                  </span>
+                  <BuildingMetricFilter
+                    filterKey={metric.filterKey}
+                    title={metric.label}
+                    colorClass={metric.color}
+                    icon={<metric.icon size={18} strokeWidth={1.7} />}
+                    elements={elements}
+                    filters={metricFilters}
+                    onChange={setMetricFilters}
+                  />
                 </div>
                 <strong>{metric.value}</strong>
                 <p>
@@ -618,6 +648,19 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
               </article>
             ))}
           </section>
+          {hasMetricFilters && (
+            <section className="building-active-filters" aria-label="적용된 카드 필터">
+              <div>
+                <SlidersHorizontal size={14} />
+                {filterLabels.map((label) => (
+                  <span key={label}>{label}</span>
+                ))}
+              </div>
+              <button type="button" className="text-button" onClick={clearFilters}>
+                <RotateCcw size={13} /> 전체 필터 초기화
+              </button>
+            </section>
+          )}
           {activeView === 'space' && (
             <section className="building-model-grid" aria-label="건물 모델과 부재 정보">
               <div className="building-viewer-column">
@@ -682,7 +725,13 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                     <div className="scene-caption">
                       <span className="live-dot" />
                       {ifcModel ? 'IFC MODEL' : 'MONO OFFICE'}
-                      <span>{floor === 'all' ? '전체 층' : floorLabel(floor)}</span>
+                      <span>
+                        {metricFilters.floors === null
+                          ? '전체 층'
+                          : metricFilters.floors.length === 1
+                            ? floorLabel(metricFilters.floors[0])
+                            : `${metricFilters.floors.length}개 층`}
+                      </span>
                     </div>
                     {visible.length ? (
                       <BuildingSceneBoundary key={modelVersion}>
@@ -727,7 +776,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                       <div className="scene-fallback">
                         <Search size={32} />
                         <strong>표시할 부재가 없습니다.</strong>
-                        <p>층·종류·검색 조건을 조정해보세요.</p>
+                        <p>카드 필터나 층·검색 조건을 조정해보세요.</p>
                         <button className="button secondary" onClick={clearFilters}>
                           조건 초기화
                         </button>
@@ -759,7 +808,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                     </span>
                   </div>
                 </article>
-                <BuildingAnalytics elements={floorElements} />
+                <BuildingAnalytics elements={spatialElements} />
               </div>
               <article className="card building-detail" aria-label="선택한 부재 정보">
                 {selected ? (
@@ -932,10 +981,12 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                   <div className="building-no-selection">
                     <Cuboid size={38} />
                     <h2>
-                      {floorElements.length ? '선택한 부재가 없습니다.' : '선택할 부재가 없습니다.'}
+                      {spatialElements.length
+                        ? '선택한 부재가 없습니다.'
+                        : '선택할 부재가 없습니다.'}
                     </h2>
                     <p>
-                      {floorElements.length
+                      {spatialElements.length
                         ? '3D 모델이나 부재 목록에서 객체를 선택해 주세요.'
                         : '필터를 변경하면 부재의 속성을 확인할 수 있어요.'}
                     </p>
@@ -1064,7 +1115,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                       placeholder="부재명, ID, GlobalId, Tag 검색"
                     />
                   </label>
-                  {(query || kind !== 'all' || floor !== 'all') && (
+                  {(query || kind !== 'all' || hasMetricFilters) && (
                     <button className="text-button" onClick={clearFilters}>
                       조건 초기화
                     </button>

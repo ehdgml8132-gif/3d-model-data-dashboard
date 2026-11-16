@@ -535,6 +535,48 @@
   font-size: 9px;
   color: #96a288;
 }
+.building-active-filters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -7px 0 20px;
+  padding: 12px 14px;
+  border: 1px solid #dce7d4;
+  border-radius: 8px;
+  background: #eff5e9;
+  color: #6b835a;
+}
+.building-active-filters > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+.building-active-filters > div > span {
+  background: #fff;
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.building-active-filters .text-button {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+}
+@media (max-width: 760px) {
+  .building-active-filters {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .building-active-filters .text-button {
+    align-self: flex-end;
+  }
+}
 .building-metrics .metric-card > strong {
   font-size: 23px;
 }

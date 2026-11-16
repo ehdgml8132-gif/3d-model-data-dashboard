@@ -340,8 +340,8 @@ export function BuildingAnalyticsNote({ isIfc = false }: { isIfc?: boolean }) {
     <p className="building-analytics-note">
       <Info size={13} />
       <span>
-        층 필터 기준의 전체 부재를 집계합니다. 단면상자는 화면만 자르며 그래프의 물량은 바꾸지
-        않습니다.{' '}
+        카드와 층 필터 조건에 맞는 부재를 집계합니다. 단면상자는 화면만 자르며 그래프의 물량은
+        바꾸지 않습니다.{' '}
         {isIfc ? '체적은 Pset 체적·Volume 값입니다.' : '체적은 샘플 모형 치수로 계산한 값입니다.'}
       </span>
     </p>

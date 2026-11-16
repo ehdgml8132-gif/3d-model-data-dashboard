@@ -1,0 +1,349 @@
+.metric-icon.building-metric-filter-trigger {
+  position: relative;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+.building-metric-filter-trigger:hover,
+.building-metric-filter-trigger[aria-expanded='true'] {
+  border-color: currentColor;
+  box-shadow: 0 0 0 3px #517c5d12;
+}
+.building-metric-filter-trigger[data-active='true'] {
+  border-color: #92ae82;
+}
+.building-metric-filter-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #477451;
+  border: 2px solid #fff;
+}
+.building-metric-filter-popover {
+  position: fixed;
+  inset: auto;
+  z-index: 200;
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  max-height: min(540px, calc(100dvh - 24px));
+  margin: 0;
+  padding: 0;
+  border: 1px solid #dce5d5;
+  border-radius: 12px;
+  box-shadow:
+    0 14px 42px #1e3d2b26,
+    0 3px 9px #1e3d2b0f;
+  background: #fff;
+  color: #45613c;
+  font: inherit;
+  overflow: hidden;
+}
+.building-metric-filter-popover[open] {
+  display: flex;
+  flex-direction: column;
+}
+.building-metric-filter-popover button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+.building-metric-filter-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid #edf1e8;
+  flex-shrink: 0;
+}
+.building-metric-filter-heading > div {
+  min-width: 0;
+}
+.building-metric-filter-heading h2 {
+  margin: 0;
+  color: #355530;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.6;
+}
+.building-metric-filter-heading p {
+  margin: 4px 0 0;
+  color: #8a9b80;
+  font-size: 10px;
+  line-height: 1.7;
+}
+.building-metric-filter-close {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  flex-shrink: 0;
+  color: #8a9c80;
+  border-radius: 6px;
+  background: #f5f8f0;
+}
+.building-metric-filter-close:hover {
+  color: #345d3d;
+  background: #edf3e6;
+}
+.building-metric-filter-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 11px 16px 0;
+  flex-shrink: 0;
+}
+.building-metric-filter-tabs button {
+  min-height: 32px;
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid #e8eee1;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #86977b;
+  background: #fbfcf8;
+}
+.building-metric-filter-tabs button[aria-selected='true'] {
+  color: #476a38;
+  border-color: #d6e3c9;
+  background: #edf4e5;
+  font-weight: 600;
+}
+.building-metric-filter-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 13px 17px 15px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd9c1 transparent;
+}
+.building-metric-filter-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
+  padding: 7px 9px;
+  border: 1px solid #e0e8d8;
+  border-radius: 6px;
+  color: #91a083;
+  background: #fbfcf8;
+}
+.building-metric-filter-search:focus-within {
+  outline: 2px solid #709563;
+  outline-offset: 1px;
+}
+.building-metric-filter-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  line-height: 22px;
+  color: #49663d;
+  background: transparent;
+  font-size: 11px;
+}
+.building-metric-filter-search input::placeholder {
+  color: #9ca992;
+}
+.building-metric-filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: -2px 0 5px;
+}
+.building-metric-filter-actions button {
+  min-height: 32px;
+  padding: 4px 0;
+  font-size: 10px;
+  color: #658753;
+}
+.building-metric-filter-actions button:hover {
+  color: #315d3a;
+  text-decoration: underline;
+}
+.building-metric-filter-options {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.building-metric-filter-option {
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #526e44;
+  cursor: pointer;
+}
+.building-metric-filter-option:hover {
+  background: #f5f8ef;
+}
+.building-metric-filter-option:has(input:checked) {
+  background: #f0f5e9;
+  border-color: #e2ebd8;
+}
+.building-metric-filter-option input,
+.building-metric-volume-unknown input {
+  width: 15px;
+  height: 15px;
+  min-width: 15px;
+  margin: 0;
+  accent-color: #4c7954;
+  cursor: pointer;
+}
+.building-metric-filter-option > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.building-metric-filter-option small {
+  display: block;
+  font-size: 9px;
+  line-height: 1.6;
+  color: #93a187;
+  margin-top: 2px;
+}
+.building-metric-filter-option em {
+  font-size: 10px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  color: #8d9d80;
+  white-space: nowrap;
+}
+.building-metric-filter-empty {
+  padding: 25px 8px;
+  font-size: 11px;
+  line-height: 1.8;
+  text-align: center;
+  color: #93a087;
+}
+.building-metric-filter-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 12px 17px;
+  border-top: 1px solid #e8eee1;
+  background: #fbfcf8;
+}
+.building-metric-filter-footer > button:not(.button) {
+  min-height: 34px;
+  padding: 5px 0;
+  color: #7e9470;
+  font-size: 10px;
+}
+.building-metric-filter-footer > button:not(.button):hover {
+  color: #3b6643;
+  text-decoration: underline;
+}
+.building-metric-filter-footer .button {
+  min-height: 34px;
+  padding: 8px 15px;
+  font-size: 11px;
+}
+.building-metric-filter-pages {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 0 0;
+}
+.building-metric-filter-pages button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid #e3ebd9;
+  border-radius: 6px;
+  color: #719260;
+  background: #fbfcf8;
+}
+.building-metric-filter-pages span {
+  font-size: 10px;
+  color: #8a9d7e;
+  font-variant-numeric: tabular-nums;
+}
+.building-metric-volume-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 2px 0 14px;
+}
+.building-metric-volume-fields label {
+  min-width: 0;
+  color: #738b64;
+  font-size: 10px;
+  line-height: 1.8;
+}
+.building-metric-volume-fields input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  margin-top: 4px;
+  padding: 7px 8px;
+  border: 1px solid #dfe8d5;
+  border-radius: 6px;
+  color: #4d6d40;
+  background: #fcfdf9;
+  font-size: 12px;
+}
+.building-metric-volume-fields input::placeholder {
+  color: #a2af96;
+  font-size: 10px;
+}
+.building-metric-volume-unknown {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  font-size: 11px;
+  color: #6f865f;
+  cursor: pointer;
+}
+.building-metric-filter-error {
+  margin: 8px 0 0;
+  padding: 9px 10px;
+  border: 1px solid #eed8ca;
+  border-radius: 6px;
+  color: #a36e4b;
+  background: #fff8f2;
+  font-size: 10px;
+  line-height: 1.7;
+}
+.building-metric-filter-summary {
+  margin: 8px 0 0;
+  color: #92a084;
+  font-size: 10px;
+  line-height: 1.8;
+}
+@media (max-width: 430px) {
+  .building-metric-filter-heading {
+    padding: 15px 15px 12px;
+  }
+  .building-metric-filter-body {
+    padding: 12px 14px 14px;
+  }
+  .building-metric-filter-footer {
+    padding: 11px 14px;
+  }
+  .building-metric-filter-tabs {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}
