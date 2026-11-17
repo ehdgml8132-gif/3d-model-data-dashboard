@@ -2,6 +2,23 @@ export type IfcElementKind = 'column' | 'beam' | 'slab' | 'wall' | 'other'
 
 export type IfcProperty = { group: string; name: string; value: string }
 
+export type IfcVolumeIssueCode =
+  | 'missing-property'
+  | 'empty-value'
+  | 'invalid-value'
+  | 'unknown-unit'
+  | 'conflicting-units'
+  | 'conflicting-values'
+  | 'property-read-error'
+  | 'property-limit'
+
+export type IfcVolumeIssue = {
+  code: IfcVolumeIssueCode
+  source?: string
+  value?: string
+  unit?: string
+}
+
 export type IfcElement = {
   id: string
   expressId: number
@@ -14,6 +31,8 @@ export type IfcElement = {
   material: string
   /** Pset 체적/Volume single-value property in m³; null when absent or its unit is unknown. */
   volume: number | null
+  /** Primary observed reason for a missing Pset volume; absent for known values. */
+  volumeIssue?: IfcVolumeIssue
   properties: IfcProperty[]
 }
 

@@ -1,8 +1,9 @@
 import { createRequire } from 'node:module'
 import { readFileSync } from 'node:fs'
-import { beforeAll, afterAll, describe, expect, it } from 'vitest'
+import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest'
 import type { IfcAPI } from 'web-ifc'
 import { extractIfcModel } from './extract'
+import { MAX_IFC_PROPERTIES_PER_ELEMENT } from './limits'
 
 const require = createRequire(import.meta.url)
 const { IfcAPI: NodeIfcAPI } = require('web-ifc') as { IfcAPI: new () => IfcAPI }
@@ -312,5 +313,207 @@ describe('Revit property-set volume extraction', () => {
       '#119=IFCSIUNIT(*,.VOLUMEUNIT.,.MILLI.,.CUBIC_METRE.);',
     ])
     expect(beamVolume(text)).toBeCloseTo(1.25, 8)
+  })
+})
+
+describe('observed reasons for unconfirmed Pset volumes', () => {
+  const beam = (text: string) => parse(text).elements.find((element) => element.expressId === 108)!
+  const withColumnType = (text: string, nominal: string, unit = '#15') =>
+    append(text, [
+      `#205=IFCPROPERTYSINGLEVALUE('${koreanVolume}',$,${nominal},${unit});`,
+      "#206=IFCPROPERTYSET('0J4FUqfnH4JfJ1O84e9Xp0',#5,'Revit Type Dimensions',$,(#205));",
+      "#207=IFCCOLUMNTYPE('0J4FUqfnH4JfJ1O84e9Xp1',#5,'Column type',$,$,(#206),$,$,$,.NOTDEFINED.);",
+      "#208=IFCRELDEFINESBYTYPE('0J4FUqfnH4JfJ1O84e9Xp2',#5,$,$,(#44,#76),#207);",
+    ])
+
+  it('reports missing Pset properties even when usable Qto volumes exist', () => {
+    const text = [200, 201, 202, 203, 204].reduce(
+      (text, id) => text.replace(',#' + id + ')', ')'),
+      source,
+    )
+    const elements = parse(text).elements
+    expect(elements).toHaveLength(5)
+    for (const element of elements) {
+      expect(element.volume).toBeNull()
+      expect(element.volumeIssue?.code).toBe('missing-property')
+      expect(element.properties.some((property) => property.name === 'NetVolume')).toBe(true)
+    }
+    expect(beam(withBeamVolume('IFCVOLUMEMEASURE(1.25)', '$', 'NetVolume')).volumeIssue?.code).toBe(
+      'missing-property',
+    )
+  })
+
+  it.each(['$', "IFCLABEL('')", "IFCLABEL('   ')"])(
+    'distinguishes a present but empty nominal value %s from an absent property',
+    (nominal) => {
+      const element = beam(withBeamVolume(nominal))
+      expect(element.volume).toBeNull()
+      expect(element.volumeIssue?.code).toBe('empty-value')
+      expect(element.volumeIssue?.source).toContain('Pset_DemoCommon')
+      expect(element.volumeIssue?.source).toContain('체적')
+    },
+  )
+
+  it.each([
+    "IFCLABEL('unknown')",
+    "IFCLABEL('NaN')",
+    "IFCLABEL('1,25 m³')",
+    "IFCLABEL('1e309')",
+    'IFCVOLUMEMEASURE(-1.)',
+    'IFCLENGTHMEASURE(1.25)',
+  ])('identifies a malformed, negative, nonfinite or wrong-measure value %s', (nominal) => {
+    const element = beam(withBeamVolume(nominal))
+    expect(element.volume).toBeNull()
+    expect(element.volumeIssue?.code).toBe('invalid-value')
+    expect(element.volumeIssue?.value).toBeTruthy()
+  })
+
+  it.each(["IFCLABEL('1.25 gallons')", "IFCLABEL('1.25 m²')"])(
+    'identifies unsupported formatted units in %s instead of blaming the numeric value',
+    (nominal) => {
+      const element = beam(withBeamVolume(nominal, '$'))
+      expect(element.volume).toBeNull()
+      expect(element.volumeIssue?.code).toBe('unknown-unit')
+    },
+  )
+
+  it('distinguishes incomplete exponents from unfamiliar units beginning with e', () => {
+    for (const nominal of ["IFCLABEL('1e+')", "IFCLABEL('1e- m³')"]) {
+      const element = beam(withBeamVolume(nominal))
+      expect(element.volume).toBeNull()
+      expect(element.volumeIssue?.code).toBe('invalid-value')
+    }
+    for (const nominal of ["IFCLABEL('1 ea')", "IFCLABEL('1 eV')"])
+      expect(beam(withBeamVolume(nominal)).volumeIssue?.code).toBe('unknown-unit')
+  })
+
+  it('identifies unsupported explicit units and a non-volume explicit dimension', () => {
+    const unknown = append(withBeamVolume('IFCVOLUMEMEASURE(1.25)', '#119'), [
+      "#119=IFCCONTEXTDEPENDENTUNIT($,.VOLUMEUNIT.,'Custom volume units');",
+    ])
+    expect(beam(unknown).volumeIssue?.code).toBe('unknown-unit')
+    expect(beam(withBeamVolume('IFCVOLUMEMEASURE(1.25)', '#13')).volumeIssue?.code).toBe(
+      'unknown-unit',
+    )
+  })
+
+  it('identifies missing project volume units when the property supplies none', () => {
+    const text = withBeamVolume('IFCREAL(1.25)', '$').replace(
+      '#16=IFCUNITASSIGNMENT((#13,#14,#15));',
+      '#16=IFCUNITASSIGNMENT((#13,#14));',
+    )
+    const element = beam(text)
+    expect(element.volume).toBeNull()
+    expect(element.volumeIssue?.code).toBe('unknown-unit')
+  })
+
+  it('distinguishes explicit-versus-formatted unit conflicts from unsupported units', () => {
+    const element = beam(withBeamVolume("IFCLABEL('1250000000 mm³')", '#15'))
+    expect(element.volume).toBeNull()
+    expect(element.volumeIssue?.code).toBe('conflicting-units')
+    expect(element.volumeIssue?.value).toContain('1250000000')
+  })
+
+  it('identifies disagreeing normalized values at the winning occurrence priority', () => {
+    const element = beam(
+      append(source.replace('(#109,#110,#204)', '(#109,#110,#204,#205)'), [
+        `#205=IFCPROPERTYSINGLEVALUE('${koreanVolume}',$,IFCVOLUMEMEASURE(2.5),#15);`,
+      ]),
+    )
+    expect(element.volume).toBeNull()
+    expect(element.volumeIssue?.code).toBe('conflicting-values')
+    expect(element.volumeIssue?.source).toContain('Pset_DemoCommon')
+  })
+
+  it('attaches a type source to a type-only failure and prefers occurrence diagnostics', () => {
+    const text = withColumnType(
+      source
+        .replace('(#77,#78,#202)', '(#77,#78)')
+        .replace('IFCVOLUMEMEASURE(0.589048623),$);', "IFCLABEL('bad occurrence'),$);"),
+      'IFCVOLUMEMEASURE(2.5)',
+      '#13',
+    )
+    const elements = parse(text).elements
+    const occurrence = elements.find((element) => element.expressId === 44)!
+    const typeOnly = elements.find((element) => element.expressId === 76)!
+    expect(occurrence.volumeIssue?.code).toBe('invalid-value')
+    expect(occurrence.volumeIssue?.source).not.toMatch(/^Type\s*\//)
+    expect(typeOnly.volumeIssue?.code).toBe('unknown-unit')
+    expect(typeOnly.volumeIssue?.source).toContain('Type / ')
+    expect(typeOnly.volumeIssue?.source).toContain('Revit Type Dimensions')
+  })
+
+  it('leaves no failure reason on valid zeroes, valid fallbacks or equal duplicate values', () => {
+    const zero = beam(withBeamVolume('IFCVOLUMEMEASURE(0.)'))
+    expect(zero.volume).toBe(0)
+    expect(zero.volumeIssue).toBeUndefined()
+    const fallback = parse(
+      withColumnType(
+        source.replace('IFCVOLUMEMEASURE(0.589048623),$);', "IFCLABEL('bad occurrence'),$);"),
+        'IFCVOLUMEMEASURE(2.5)',
+      ),
+    ).elements.find((element) => element.expressId === 44)!
+    expect(fallback.volume).toBe(2.5)
+    expect(fallback.volumeIssue).toBeUndefined()
+    const duplicate = beam(
+      append(source.replace('(#109,#110,#204)', '(#109,#110,#204,#205)'), [
+        `#205=IFCPROPERTYSINGLEVALUE('${koreanVolume}',$,IFCVOLUMEMEASURE(1250000000.),#119);`,
+        '#119=IFCSIUNIT(*,.VOLUMEUNIT.,.MILLI.,.CUBIC_METRE.);',
+      ]),
+    )
+    expect(duplicate.volume).toBeCloseTo(1.25, 8)
+    expect(duplicate.volumeIssue).toBeUndefined()
+    expect(parse().elements.every((element) => element.volumeIssue === undefined)).toBe(true)
+  })
+
+  it('reports a search limit rather than claiming a skipped volume property is absent', () => {
+    const ordinary = Array.from(
+      { length: MAX_IFC_PROPERTIES_PER_ELEMENT },
+      (_, index) =>
+        `#${1000 + index}=IFCPROPERTYSINGLEVALUE('Property ${index}',$,IFCLABEL('x'),$);`,
+    )
+    const refs = ordinary.map((_, index) => `#${1000 + index}`).join(',')
+    const text = append(source.replace('(#109,#110,#204)', `(${refs},#204)`), ordinary)
+    const element = beam(text)
+    expect(element.volume).toBeNull()
+    expect(element.volumeIssue?.code).toBe('property-limit')
+    // The same display cap must not invalidate a volume already read safely.
+    const known = beam(append(source.replace('(#109,#110,#204)', `(#204,${refs})`), ordinary))
+    expect(known.volume).toBe(1.25)
+    expect(known.volumeIssue).toBeUndefined()
+  })
+
+  it('reports an actual property read failure instead of inventing a missing-property cause', () => {
+    const getLine = api.GetLine.bind(api)
+    const spy = vi
+      .spyOn(api, 'GetLine')
+      .mockImplementation((...args: Parameters<IfcAPI['GetLine']>) => {
+        if (args[1] === 204) throw new Error('Injected broken property reference')
+        return getLine(...args)
+      })
+    try {
+      const element = beam(source)
+      expect(element.volume).toBeNull()
+      expect(element.volumeIssue?.code).toBe('property-read-error')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('bounds retained source, raw value and unit context independently of display text', () => {
+    const text = append(
+      withBeamVolume(`IFCLABEL('${'invalid '.repeat(100)}')`, '#119').replace(
+        "'Pset_DemoCommon',$,(#109,#110,#204)",
+        `'${'Source'.repeat(100)}',$,(#109,#110,#204)`,
+      ),
+      [`#119=IFCCONTEXTDEPENDENTUNIT($,.VOLUMEUNIT.,'${'Unit'.repeat(100)}');`],
+    )
+    const issue = beam(text).volumeIssue!
+    expect(issue.code).toBe('invalid-value')
+    expect(issue.source).toBeTruthy()
+    expect(issue.value).toBeTruthy()
+    expect(issue.source!.length).toBeLessThanOrEqual(260)
+    expect(issue.value!.length).toBeLessThanOrEqual(160)
+    expect(issue.unit?.length ?? 0).toBeLessThanOrEqual(120)
   })
 })

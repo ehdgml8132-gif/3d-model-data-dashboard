@@ -1,0 +1,177 @@
+.volume-diagnostics {
+  min-width: 0;
+  margin-top: 15px;
+  padding-top: 14px;
+  border-top: 1px solid #e6edde;
+  overflow-wrap: anywhere;
+}
+.volume-diagnostics-heading {
+  display: grid;
+  gap: 4px;
+}
+.volume-diagnostics-heading h3 {
+  margin: 0;
+  color: #46643a;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.7;
+}
+.volume-diagnostics-heading > strong {
+  color: #8a7652;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.7;
+  font-variant-numeric: tabular-nums;
+}
+.volume-diagnostics-note,
+.volume-diagnostics-empty {
+  margin: 7px 0 0;
+  color: #889a7b;
+  font-size: 10px;
+  line-height: 1.8;
+}
+.volume-diagnostics-empty {
+  padding: 10px 11px;
+  border-radius: 6px;
+  background: #f5f8ef;
+  color: #6f8960;
+}
+.volume-diagnostics-groups {
+  display: grid;
+  gap: 7px;
+  margin: 11px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.volume-diagnostics-groups > li {
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid #e9e3d6;
+  border-radius: 7px;
+  background: #fbfaf5;
+}
+.volume-diagnostics-groups > li > div {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.volume-diagnostics-groups strong {
+  min-width: 0;
+  color: #6c7857;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.7;
+}
+.volume-diagnostics-groups span {
+  flex-shrink: 0;
+  color: #9a825b;
+  font-size: 10px;
+  line-height: 1.9;
+  font-variant-numeric: tabular-nums;
+}
+.volume-diagnostics-groups p {
+  margin: 4px 0 0;
+  color: #8b9580;
+  font-size: 10px;
+  line-height: 1.8;
+}
+.volume-diagnostics-members {
+  margin-top: 12px;
+}
+.volume-diagnostics-members > summary {
+  padding: 7px 0;
+  color: #69875a;
+  font-size: 10px;
+  line-height: 1.8;
+  cursor: pointer;
+}
+.volume-diagnostics-members > summary:focus-visible {
+  outline: 2px solid #709563;
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+.volume-diagnostics-members > ol {
+  display: grid;
+  gap: 11px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.volume-diagnostics-members > ol > li {
+  min-width: 0;
+  padding: 10px 0 0;
+  border-top: 1px solid #edf1e7;
+}
+.volume-diagnostics-members > ol > li > strong {
+  display: block;
+  color: #526f43;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.7;
+}
+.volume-diagnostics-members small {
+  display: block;
+  margin-top: 3px;
+  color: #94a387;
+  font-size: 9px;
+  line-height: 1.7;
+}
+.volume-diagnostics-members > ol > li > p {
+  margin: 5px 0 0;
+  color: #927e59;
+  font-size: 10px;
+  line-height: 1.8;
+}
+.volume-diagnostics-members dl {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 8px 9px;
+  border-radius: 5px;
+  background: #f7f9f3;
+  font-size: 9px;
+  line-height: 1.8;
+}
+.volume-diagnostics-members dl > div {
+  display: grid;
+  grid-template-columns: 43px minmax(0, 1fr);
+  gap: 7px;
+}
+.volume-diagnostics-members dt {
+  color: #96a28a;
+}
+.volume-diagnostics-members dd {
+  min-width: 0;
+  margin: 0;
+  color: #748b65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.volume-diagnostics-pages {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 13px;
+}
+.volume-diagnostics-pages button {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid #e1ead7;
+  border-radius: 6px;
+  color: #719260;
+  background: #fbfcf8;
+}
+.volume-diagnostics-pages span {
+  min-width: 0;
+  color: #8a9c7d;
+  font-size: 10px;
+  line-height: 1.7;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}

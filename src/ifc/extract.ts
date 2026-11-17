@@ -13,14 +13,22 @@ import type {
   IfcModel,
   IfcProgress,
   IfcProperty,
+  IfcVolumeIssue,
 } from './types'
 
 // web-ifc's generated schema classes differ across IFC2X3 / IFC4 / IFC4X3.
 // Values are read shallowly and only known relation/property references expanded.
 type Line = Record<string, unknown> & { expressID?: number; type?: number }
 type Unit = { factor: number; label: string; dimension: number }
-type Volume = { value: number; priority: number }
-type PropertySet = { properties: IfcProperty[]; volumes: Volume[] }
+type Volume = { value: number; priority: number; source: string }
+type PropertySet = {
+  properties: IfcProperty[]
+  volumes: Volume[]
+  volumeIssue?: IfcVolumeIssue
+  volumeScanLimited?: boolean
+  source: string
+}
+type ParsedVolume = { raw: number; unit?: Unit } | { issue: IfcVolumeIssue['code']; unit?: string }
 type Reporter = (progress: IfcProgress) => void
 
 const prefixes: Record<string, number> = {
@@ -116,7 +124,9 @@ function kindOf(name: string): IfcElementKind {
 // Revit can export the parameter as a typed measure or as formatted text.
 // Only complete numbers (with optional thousands separators) and known cubic
 // units are accepted; parseFloat would silently accept malformed values.
-function parsePropertyVolume(value: unknown): { raw: number; unit?: Unit } | undefined {
+function parsePropertyVolume(value: unknown): ParsedVolume {
+  const text = scalar(value).trim()
+  if (!text) return { issue: 'empty-value' }
   const nominalType = scalar((value as Line | undefined)?.name).toUpperCase()
   if (
     nominalType &&
@@ -131,13 +141,13 @@ function parsePropertyVolume(value: unknown): { raw: number; unit?: Unit } | und
       'IFCIDENTIFIER',
     ].includes(nominalType)
   )
-    return undefined
-  const match = scalar(value)
-    .trim()
-    .match(/^([+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*(.*)$/)
-  if (!match) return undefined
+    return { issue: 'invalid-value' }
+  const match = text.match(
+    /^([+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*(.*)$/,
+  )
+  if (!match) return { issue: 'invalid-value' }
   const raw = Number(match[1].replaceAll(',', ''))
-  if (!Number.isFinite(raw) || raw < 0) return undefined
+  if (!Number.isFinite(raw) || raw < 0) return { issue: 'invalid-value' }
   if (!match[2]) return { raw }
   const symbol = match[2].normalize('NFKC').toLowerCase().replace(/\s/g, '').replace(/\^3$/, '3')
   const factors: Record<string, number> = {
@@ -149,7 +159,16 @@ function parsePropertyVolume(value: unknown): { raw: number; unit?: Unit } | und
     in3: 0.000016387064,
   }
   const factor = factors[symbol]
-  if (factor === undefined) return undefined
+  if (factor === undefined)
+    return {
+      // Dangling separators and incomplete exponents are malformed numbers,
+      // rather than evidence of an unfamiliar unit (such as "ea" or "eV").
+      issue:
+        /^[\d,\.]/.test(match[2]) || /^[eE](?:[+-]|\d|\s|$)/.test(match[2])
+          ? 'invalid-value'
+          : 'unknown-unit',
+      unit: match[2].slice(0, 120),
+    }
   return { raw, unit: { factor, dimension: 3, label: symbol.replace(/3$/, '³') } }
 }
 
@@ -503,11 +522,12 @@ export function extractIfcModel(
     const cached = setCache.get(id)
     if (cached) return cached
     const item = line(id)
-    const result: PropertySet = { properties: [], volumes: [] }
     const group = scalar(item.Name) || 'IFC 속성집합'
+    const result: PropertySet = { properties: [], volumes: [], source: group.slice(0, 260) }
     function property(reference: unknown, path = '', depth = 0) {
       if (depth > 8 || result.properties.length >= MAX_IFC_PROPERTIES_PER_ELEMENT) {
         propertiesCapped = true
+        if (item.type === WebIFC.IFCPROPERTYSET) result.volumeScanLimited = true
         return
       }
       const prop = resolved(reference)
@@ -544,23 +564,45 @@ export function extractIfcModel(
       }
       if (
         item.type === WebIFC.IFCPROPERTYSET &&
-        prop.type === WebIFC.IFCPROPERTYSINGLEVALUE &&
         /^(체적|volume)$/i.test(scalar(prop.Name).trim().normalize('NFC'))
       ) {
-        const parsed = parsePropertyVolume(prop.NominalValue)
-        const unit = prop.Unit ? explicitUnit : parsed?.unit || volumeUnit
-        const consistentUnits =
-          !prop.Unit ||
-          !parsed?.unit ||
-          (explicitUnit &&
-            Math.abs(explicitUnit.factor - parsed.unit.factor) <= parsed.unit.factor * 1e-8)
-        if (parsed && unit?.dimension === 3 && consistentUnits) {
-          const value = parsed.raw * unit.factor
-          if (Number.isFinite(value)) {
-            result.volumes.push({ value, priority: 0 })
-            propertyUnitLabel = parsed.unit ? '' : unit.label
-          } else unreadableVolumeProperty = true
-        } else unreadableVolumeProperty = true
+        const source = `${group} / ${name}`.slice(0, 260)
+        const recordIssue = (code: IfcVolumeIssue['code'], unit = propertyUnitLabel) => {
+          unreadableVolumeProperty = true
+          result.volumeIssue ??= {
+            code,
+            source,
+            value: scalar(prop.NominalValue ?? prop.ListValues ?? prop.EnumerationValues).slice(
+              0,
+              160,
+            ),
+            ...(unit ? { unit: unit.slice(0, 120) } : {}),
+          }
+        }
+        if (prop.type !== WebIFC.IFCPROPERTYSINGLEVALUE) recordIssue('invalid-value')
+        else {
+          const parsed = parsePropertyVolume(prop.NominalValue)
+          if ('issue' in parsed) recordIssue(parsed.issue, parsed.unit || propertyUnitLabel)
+          else {
+            const unit = prop.Unit ? explicitUnit : parsed.unit || volumeUnit
+            const consistentUnits =
+              !prop.Unit ||
+              !parsed.unit ||
+              (explicitUnit &&
+                Math.abs(explicitUnit.factor - parsed.unit.factor) <= parsed.unit.factor * 1e-8)
+            if (unit?.dimension !== 3)
+              recordIssue('unknown-unit', propertyUnitLabel || defaultUnitLabel('VOLUMEUNIT'))
+            else if (!consistentUnits)
+              recordIssue('conflicting-units', `${unit.label} / ${parsed.unit?.label || ''}`)
+            else {
+              const value = parsed.raw * unit.factor
+              if (Number.isFinite(value)) {
+                result.volumes.push({ value, priority: 0, source })
+                propertyUnitLabel = parsed.unit ? '' : unit.label
+              } else recordIssue('invalid-value')
+            }
+          }
+        }
       }
       const add = (label: string, value: unknown) => {
         const raw = scalar(value)
@@ -635,6 +677,7 @@ export function extractIfcModel(
         if (value) addProperty({ group: 'IFC Attributes', name: key, value: value.slice(0, 4000) })
       }
       const volumeCandidates: Volume[] = []
+      const volumeIssues: { issue: IfcVolumeIssue; priority: number }[] = []
       const sourceSets: { id: number; prefix: string; type: boolean }[] = []
       for (const id of sets.get(element.expressId) || [])
         sourceSets.push({ id, prefix: '', type: false })
@@ -655,7 +698,22 @@ export function extractIfcModel(
         }
         // An occurrence's Revit parameter takes precedence over its type parameter.
         for (const volume of set.volumes)
-          volumeCandidates.push({ ...volume, priority: volume.priority + (source.type ? 10 : 0) })
+          volumeCandidates.push({
+            ...volume,
+            priority: volume.priority + (source.type ? 10 : 0),
+            source: `${source.prefix}${volume.source}`.slice(0, 260),
+          })
+        const issue: IfcVolumeIssue | undefined = set.volumeScanLimited
+          ? { code: 'property-limit', source: set.source }
+          : set.volumeIssue
+        if (issue)
+          volumeIssues.push({
+            issue: {
+              ...issue,
+              ...(issue.source ? { source: `${source.prefix}${issue.source}`.slice(0, 260) } : {}),
+            },
+            priority: source.type ? 10 : 0,
+          })
       }
       element.properties = properties
       volumeCandidates.sort((a, b) => a.priority - b.priority)
@@ -669,12 +727,27 @@ export function extractIfcModel(
           )
         )
           element.volume = best.value
-        else
+        else {
+          const conflicting = peers.find(
+            (volume) =>
+              Math.abs(volume.value - best.value) >= Math.max(1e-9, Math.abs(best.value) * 1e-8),
+          )!
+          element.volumeIssue = {
+            code: 'conflicting-values',
+            source: `${best.source} / ${conflicting.source}`.slice(0, 260),
+            value: `${best.value} / ${conflicting.value}`.slice(0, 160),
+            unit: 'm³',
+          }
           warnings.add(
             '동일 부재에 서로 다른 Pset 체적 값이 있어 해당 체적을 미지정으로 표시했습니다.',
           )
+        }
+      } else {
+        volumeIssues.sort((a, b) => a.priority - b.priority)
+        element.volumeIssue = volumeIssues[0]?.issue || { code: 'missing-property' }
       }
     } catch {
+      if (element.volume === null) element.volumeIssue = { code: 'property-read-error' }
       warnings.add('일부 부재의 층·재료·속성을 완전히 읽지 못했습니다.')
     }
     if (i % 100 === 0)

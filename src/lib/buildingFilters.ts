@@ -1,3 +1,5 @@
+import type { IfcVolumeIssue } from '../ifc/types'
+
 export type BuildingFilterElement = {
   id: string
   name: string
@@ -5,6 +7,7 @@ export type BuildingFilterElement = {
   floor: string
   material: string
   volume: number | null
+  volumeIssue?: IfcVolumeIssue
 }
 
 export type BuildingMetricFilterKey = 'members' | 'volume' | 'floors' | 'materials'

@@ -39,7 +39,7 @@ import {
 import { ELEMENT_KIND_LABELS, formatVolume } from '../lib/building'
 import { loadIfcFile } from '../ifc/client'
 import { MAX_IFC_FILE_BYTES } from '../ifc/limits'
-import type { IfcModel } from '../ifc/types'
+import type { IfcModel, IfcVolumeIssue } from '../ifc/types'
 import BusinessDataPanel, { type BusinessConnection } from './BusinessDataPanel'
 import BuildingAnalytics, { BuildingAnalyticsNote } from './BuildingAnalytics'
 import BuildingMetricFilter from './BuildingMetricFilter'
@@ -77,6 +77,7 @@ type DisplayElement = {
   floor: string
   material: string
   volume: number | null
+  volumeIssue?: IfcVolumeIssue
   dimensions?: [number, number, number]
   properties: { group: string; name: string; value: string }[]
 }
@@ -830,6 +831,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                     colorClass={metric.color}
                     icon={<metric.icon size={18} strokeWidth={1.7} />}
                     elements={elements}
+                    visibleElements={visible}
                     filters={metricFilters}
                     onChange={setMetricFilters}
                   />

@@ -16,6 +16,7 @@ import {
   type BuildingMetricFilterKey,
   type BuildingMetricFilters,
 } from '../lib/buildingFilters'
+import VolumeDiagnostics from './VolumeDiagnostics'
 import './building-metric-filter.css'
 
 type Props = {
@@ -24,6 +25,7 @@ type Props = {
   colorClass: string
   icon: ReactNode
   elements: BuildingFilterElement[]
+  visibleElements?: BuildingFilterElement[]
   filters: BuildingMetricFilters
   onChange: (next: BuildingMetricFilters) => void
 }
@@ -74,6 +76,7 @@ export default function BuildingMetricFilter({
   colorClass,
   icon,
   elements,
+  visibleElements = elements,
   filters,
   onChange,
 }: Props) {
@@ -171,7 +174,10 @@ export default function BuildingMetricFilter({
     }
     window.addEventListener('resize', position)
     window.addEventListener('scroll', scroll, true)
+    const observer = new ResizeObserver(position)
+    if (panel.current) observer.observe(panel.current)
     return () => {
+      observer.disconnect()
       window.removeEventListener('resize', position)
       window.removeEventListener('scroll', scroll, true)
     }
@@ -374,6 +380,7 @@ export default function BuildingMetricFilter({
                       {volumeError}
                     </p>
                   )}
+                  <VolumeDiagnostics elements={visibleElements} />
                 </>
               ) : (
                 <>

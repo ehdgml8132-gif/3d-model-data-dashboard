@@ -6,6 +6,8 @@ test.setTimeout(90_000)
 
 const members = (page: Page) => page.getByRole('article', { name: '부재 목록', exact: true })
 const detail = (page: Page) => page.getByRole('article', { name: '선택한 부재 정보', exact: true })
+const diagnostics = (popup: Locator) =>
+  popup.getByRole('region', { name: '체적 미확인 사유', exact: true })
 const metric = (page: Page, name: string) =>
   page
     .getByRole('region', { name: '건물 집계 지표', exact: true })
@@ -150,15 +152,30 @@ test('IFC volume filters distinguish unknown from zero and reject reversed bound
   })
   await expect(members(page).locator('tbody tr')).toHaveCount(5, { timeout: 45_000 })
   let popup = await openFilter(page, '총 체적')
+  await expect(diagnostics(popup)).toContainText('현재 표시 부재 중 1개')
+  await expect(
+    diagnostics(popup)
+      .locator('.volume-diagnostics-groups')
+      .getByText('체적 속성 없음', { exact: true }),
+  ).toBeVisible()
+  await diagnostics(popup).getByText('미확인 부재 보기', { exact: true }).click()
+  const unknownMembers = diagnostics(popup).getByRole('list', { name: '미확인 부재 목록' })
+  await expect(unknownMembers.getByRole('listitem')).toHaveCount(1)
+  await expect(unknownMembers).toContainText('Steel beam 1')
+  await expect(unknownMembers).not.toContainText('Round concrete column G')
   await popup.getByLabel('최소 체적 (m³)', { exact: true }).fill('0')
   await popup.getByLabel('최대 체적 (m³)', { exact: true }).fill('0')
   await popup.getByRole('checkbox', { name: '체적 미확인 포함', exact: true }).uncheck()
+  // Diagnostics describe the currently applied card, not an unapplied draft.
+  await expect(diagnostics(popup)).toContainText('현재 표시 부재 중 1개')
   await popup.getByRole('button', { name: '적용', exact: true }).click()
   await expect(members(page).locator('tbody tr')).toHaveCount(1)
   await expect(members(page)).toContainText('Round concrete column G')
   await expect(metric(page, '총 체적')).toHaveText('0.00 m³')
 
   popup = await openFilter(page, '총 체적')
+  await expect(diagnostics(popup)).toContainText('현재 표시 부재 중 0개')
+  await expect(diagnostics(popup)).toContainText('현재 표시된 부재에는 체적 미확인이 없습니다.')
   await popup.getByRole('checkbox', { name: '체적 미확인 포함', exact: true }).check()
   await popup.getByRole('button', { name: '적용', exact: true }).click()
   await expect(members(page).locator('tbody tr')).toHaveCount(2)
@@ -168,6 +185,12 @@ test('IFC volume filters distinguish unknown from zero and reject reversed bound
   )
 
   popup = await openFilter(page, '총 체적')
+  await expect(diagnostics(popup)).toContainText('현재 표시 부재 중 1개')
+  await expect(
+    diagnostics(popup)
+      .locator('.volume-diagnostics-groups')
+      .getByText('체적 속성 없음', { exact: true }),
+  ).toBeVisible()
   await popup.getByLabel('최소 체적 (m³)', { exact: true }).fill('5')
   await popup.getByLabel('최대 체적 (m³)', { exact: true }).fill('1')
   await popup.getByRole('button', { name: '적용', exact: true }).click()
@@ -177,6 +200,159 @@ test('IFC volume filters distinguish unknown from zero and reject reversed bound
   await expect(popup).toHaveCount(0)
   await page.getByRole('button', { name: '샘플로 돌아가기', exact: true }).click()
   await expect(members(page).locator('tbody tr')).toHaveCount(72)
+})
+
+test('IFC unknown-volume reasons follow the visible card, survive reopening and page member details', async ({
+  page,
+}) => {
+  test.setTimeout(120_000)
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  const rawInvalidValue = 'not-a-number <img src=x onerror=window.__volumeIssueExecuted=1>'
+  const source = (
+    await readFile(new URL('../public/examples/authored-building.ifc', import.meta.url), 'utf8')
+  )
+    // Qto remains available for this column but must not replace its missing Pset.
+    .replace('(#45,#46,#200)', '(#45,#46)')
+    .replace('IFCVOLUMEMEASURE(3.6)', '$')
+    .replace(/#202=[^\n]+/, (line) =>
+      line.replace('IFCVOLUMEMEASURE(0.589048623)', `IFCLABEL('${rawInvalidValue}')`),
+    )
+    .replace(/#203=[^\n]+/, (line) => line.replace(',$);', ',#205);'))
+    .replace('(#109,#110,#204)', '(#109,#110,#204,#206)')
+    .replace(
+      'ENDSEC;\nEND-ISO',
+      "#205=IFCCONTEXTDEPENDENTUNIT($,.VOLUMEUNIT.,'Fixture unknown cubic unit');\n" +
+        "#206=IFCPROPERTYSINGLEVALUE('Volume',$,IFCVOLUMEMEASURE(2.5),#15);\n" +
+        'ENDSEC;\nEND-ISO',
+    )
+  await openBuilding(page)
+  await page.getByLabel('IFC 파일 선택', { exact: true }).setInputFiles({
+    name: 'volume-reasons.ifc',
+    mimeType: 'application/octet-stream',
+    buffer: Buffer.from(source),
+  })
+  await expect(members(page).locator('tbody tr')).toHaveCount(5, { timeout: 45_000 })
+  await expect(metric(page, '총 체적')).toHaveText('—')
+  let popup = await openFilter(page, '총 체적')
+  let reasons = diagnostics(popup)
+  await expect(reasons).toContainText('현재 표시 부재 중 5개')
+  for (const label of [
+    '체적 속성 없음',
+    '체적 값 비어 있음',
+    '체적 값 해석 불가',
+    '체적 단위 확인 불가',
+    '체적 값 충돌',
+  ]) {
+    const group = reasons.locator('.volume-diagnostics-groups > li').filter({
+      has: page.getByText(label, { exact: true }),
+    })
+    await expect(group).toHaveCount(1)
+    await expect(group.getByText('1개', { exact: true })).toBeVisible()
+  }
+  await reasons.getByText('미확인 부재 보기', { exact: true }).click()
+  let unknownMembers = reasons.getByRole('list', { name: '미확인 부재 목록' })
+  await expect(unknownMembers.getByRole('listitem')).toHaveCount(5)
+  await expect(unknownMembers).toContainText(rawInvalidValue)
+  await expect(unknownMembers).toContainText('Fixture unknown cubic unit')
+  await expect(unknownMembers.locator('img')).toHaveCount(0)
+  expect(
+    await page.evaluate(
+      () => (window as Window & { __volumeIssueExecuted?: number }).__volumeIssueExecuted,
+    ),
+  ).toBeUndefined()
+  await page.screenshot({ path: '/tmp/volume-diagnostics-desktop.png', fullPage: false })
+  await page.setViewportSize({ width: 390, height: 844 })
+  const bounds = (await popup.boundingBox())!
+  expect(bounds.x).toBeGreaterThanOrEqual(0)
+  expect(bounds.y).toBeGreaterThanOrEqual(0)
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(391)
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(845)
+  await expect(popup.getByRole('button', { name: '적용', exact: true })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: '/tmp/volume-diagnostics-mobile.png', fullPage: false })
+  await popup.getByRole('button', { name: '적용', exact: true }).click()
+  await page.setViewportSize({ width: 1440, height: 1080 })
+
+  const projectName = '체적 미확인 검토'
+  const projectToolbar = page.getByRole('region', { name: '프로젝트 작업공간', exact: true })
+  await projectToolbar.getByRole('button', { name: '프로젝트 저장', exact: true }).click()
+  const save = page.getByRole('dialog', { name: '프로젝트 저장', exact: true })
+  await save.getByRole('textbox', { name: '프로젝트 이름', exact: true }).fill(projectName)
+  await save.getByRole('button', { name: '저장', exact: true }).click()
+  await expect(save).toHaveCount(0)
+
+  popup = await openFilter(page, '표시 층')
+  await popup.getByRole('checkbox', { name: 'First floor', exact: true }).check()
+  await popup.getByRole('checkbox', { name: 'Ground floor', exact: true }).uncheck()
+  await closeFilter(popup)
+  await expect(members(page).locator('tbody tr')).toHaveCount(3)
+  popup = await openFilter(page, '총 체적')
+  reasons = diagnostics(popup)
+  await expect(reasons).toContainText('현재 표시 부재 중 3개')
+  await expect(
+    reasons.locator('.volume-diagnostics-groups').getByText('체적 속성 없음', { exact: true }),
+  ).toHaveCount(0)
+  await expect(reasons.getByText('체적 값 비어 있음', { exact: true })).toHaveCount(0)
+  await popup.getByRole('button', { name: '적용', exact: true }).click()
+  const menu = page.getByRole('navigation', { name: '건물 메뉴', exact: true })
+  await menu.getByRole('button', { name: '부재 데이터', exact: true }).click()
+  await page.getByRole('textbox', { name: '부재 검색', exact: true }).fill('Steel beam')
+  await expect(members(page).locator('tbody tr')).toHaveCount(1)
+  popup = await openFilter(page, '총 체적')
+  reasons = diagnostics(popup)
+  await expect(reasons).toContainText('현재 표시 부재 중 1개')
+  await expect(
+    reasons.locator('.volume-diagnostics-groups').getByText('체적 값 충돌', { exact: true }),
+  ).toBeVisible()
+  await popup.getByRole('checkbox', { name: '체적 미확인 포함', exact: true }).uncheck()
+  await popup.getByRole('button', { name: '적용', exact: true }).click()
+  await expect(members(page).locator('tbody tr')).toHaveCount(0)
+  popup = await openFilter(page, '총 체적')
+  await expect(diagnostics(popup)).toContainText('현재 표시 부재 중 0개')
+  await expect(diagnostics(popup)).toContainText('현재 표시된 부재에는 체적 미확인이 없습니다.')
+  await page.keyboard.press('Escape')
+
+  // Projects store the original IFC: reopening must recompute, rather than lose,
+  // the observed reasons even after different filters and a full page reload.
+  await page.reload()
+  await projectToolbar.getByRole('button', { name: '프로젝트 열기', exact: true }).click()
+  const library = page.getByRole('dialog', { name: '프로젝트 열기', exact: true })
+  await library.getByRole('button', { name: `${projectName} 열기`, exact: true }).click()
+  await expect(library).toHaveCount(0, { timeout: 45_000 })
+  await expect(members(page).locator('tbody tr')).toHaveCount(5)
+  popup = await openFilter(page, '총 체적')
+  await expect(diagnostics(popup)).toContainText('현재 표시 부재 중 5개')
+  await expect(
+    diagnostics(popup)
+      .locator('.volume-diagnostics-groups')
+      .getByText('체적 값 해석 불가', { exact: true }),
+  ).toBeVisible()
+  await popup.getByRole('button', { name: '적용', exact: true }).click()
+
+  // A model with only Qto volume data can have hundreds of unknowns. The popup
+  // renders one bounded page, while still making every affected member reachable.
+  await page.getByLabel('IFC 파일 선택', { exact: true }).setInputFiles({
+    name: 'qto-only-206.ifc',
+    mimeType: 'application/octet-stream',
+    buffer: await readFile(new URL('./fixtures/pagination-building.ifc', import.meta.url)),
+  })
+  await expect(metric(page, '표시 부재')).toHaveText('206개', { timeout: 45_000 })
+  popup = await openFilter(page, '총 체적')
+  reasons = diagnostics(popup)
+  await expect(reasons).toContainText('현재 표시 부재 중 206개')
+  await expect(
+    reasons.locator('.volume-diagnostics-groups').getByText('체적 속성 없음', { exact: true }),
+  ).toBeVisible()
+  await reasons.getByText('미확인 부재 보기', { exact: true }).click()
+  unknownMembers = reasons.getByRole('list', { name: '미확인 부재 목록' })
+  await expect(unknownMembers.getByRole('listitem')).toHaveCount(20)
+  const pager = reasons.getByRole('navigation', { name: '미확인 부재 페이지', exact: true })
+  await expect(pager.getByRole('button', { name: '이전 미확인 부재 페이지' })).toBeDisabled()
+  await pager.getByRole('button', { name: '다음 미확인 부재 페이지' }).click()
+  await expect(pager).toContainText('21–40 / 206개')
+  await expect(unknownMembers.getByRole('listitem')).toHaveCount(20)
+  expect(errors).toEqual([])
 })
 
 test('mobile card popovers stay in the viewport and Escape preserves model selection', async ({
