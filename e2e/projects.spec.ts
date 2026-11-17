@@ -147,16 +147,12 @@ function exportedWorkspace(html: Buffer): SavedProject['snapshot']['workspace'] 
     .snapshot.workspace
 }
 
-function expectCameraRestored(restored: ProjectCamera, original: ProjectCamera) {
-  restored.position.forEach((value, index) =>
-    expect(value).toBeCloseTo(original.position[index], 5),
-  )
-  restored.target.forEach((value, index) => expect(value).toBeCloseTo(original.target[index], 5))
-  const viewportScale = Math.min(
-    restored.viewport[0] / original.viewport[0],
-    restored.viewport[1] / original.viewport[1],
-  )
-  expect(restored.zoom).toBeCloseTo(original.zoom * viewportScale, 5)
+async function expectNoProjectManagement(page: Page) {
+  await expect(toolbar(page)).toHaveCount(0)
+  await expect(page.getByTestId('current-project-name')).toHaveCount(0)
+  for (const name of ['프로젝트 저장', '다른 이름으로 저장', '프로젝트 열기', '파일로 내보내기']) {
+    await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0)
+  }
 }
 
 async function openDownloadedHtml(page: Page, path: string, testInfo: TestInfo) {
@@ -367,7 +363,7 @@ test('HTML project files restore IFC and linked data in a fresh mobile browser a
   }
 })
 
-test('downloaded HTML opens and re-exports offline with the saved model, data, filters and camera', async ({
+test('downloaded HTML restores the offline workspace without project management controls', async ({
   page,
   browser,
 }, testInfo) => {
@@ -375,6 +371,7 @@ test('downloaded HTML opens and re-exports offline with the saved model, data, f
   const note =
     '</script><script>window.__projectScriptRan=2</script><!-- 한글 & <b>값</b> \u2028\u2029'
   await openBuilding(page)
+  await expect(toolbar(page)).toBeVisible()
   await importIfc(page)
   await connectBusiness(page, note)
   await selectColumn(page)
@@ -426,9 +423,13 @@ test('downloaded HTML opens and re-exports offline with the saved model, data, f
     })
     offline.on('page', (opened) => opened.on('pageerror', (error) => errors.push(error.message)))
     let local = await openDownloadedHtml(await offline.newPage(), path, testInfo)
-    await expect(local.getByTestId('current-project-name')).toHaveText(projectName, {
+    await expect(
+      local.getByText('업로드한 IFC 모델 · authored-building.ifc', { exact: true }),
+    ).toBeVisible({
       timeout: 45_000,
     })
+    await expect(local.locator('html')).toHaveAttribute('data-monospace-project', '1')
+    await expectNoProjectManagement(local)
     await expect(local.getByRole('textbox', { name: '부재 검색', exact: true })).toHaveValue(
       columnName,
     )
@@ -446,36 +447,38 @@ test('downloaded HTML opens and re-exports offline with the saved model, data, f
     const localCanvas = local.getByLabel('IFC 모델 3D 뷰어', { exact: true })
     await expect(localCanvas).toHaveAttribute('data-section-min', savedMin!)
     await expect(localCanvas).toHaveAttribute('data-section-max', savedMax!)
+    // The large startup payload is removed after opening. The exported-page
+    // mode must survive that cleanup and keep management controls unmounted.
+    await expect(local.locator('#monospace-project')).toHaveCount(0)
+    await expectNoProjectManagement(local)
     expect(
       await local.evaluate(
         () => (window as Window & { __projectScriptRan?: number }).__projectScriptRan,
       ),
     ).toBeUndefined()
-    await local.screenshot({ path: '/tmp/monospace-project-html-offline.png', fullPage: false })
+    await local.screenshot({ path: '/tmp/monospace-project-html-no-toolbar.png', fullPage: false })
 
-    // Exporting from the downloaded copy must reuse its embedded viewer, and
-    // include the changed spatial view rather than reopening the original data view.
-    const secondDownloadPromise = local.waitForEvent('download', { timeout: 60_000 })
-    await toolbar(local).getByRole('button', { name: '파일로 내보내기', exact: true }).click()
-    const secondDownload = await secondDownloadPromise
-    expect(secondDownload.suggestedFilename()).toMatch(/\.html$/)
-    const secondPath = testInfo.outputPath('re-exported-project.html')
-    await secondDownload.saveAs(secondPath)
-    const reexported = exportedWorkspace(await readFile(secondPath))
-    expect(reexported.activeView).toBe('space')
-    expect(reexported.camera).not.toBeNull()
-    expectCameraRestored(reexported.camera!, originalWorkspace.camera!)
-    local = await openDownloadedHtml(local, secondPath, testInfo)
-    await expect(local.getByTestId('current-project-name')).toHaveText(projectName, {
-      timeout: 45_000,
-    })
+    await menu(local).getByRole('button', { name: '부재 데이터', exact: true }).click()
+    await expect(local.getByRole('textbox', { name: '부재 검색', exact: true })).toHaveValue(
+      columnName,
+    )
+    await expect(members(local).locator('tbody tr')).toHaveCount(1)
+    await expectNoProjectManagement(local)
+    await menu(local).getByRole('button', { name: '공간 데이터', exact: true }).click()
+    await local.getByRole('button', { name: '카페 샘플', exact: true }).click()
+    await expect(
+      local.getByRole('heading', { name: '모노 카페 대시보드', exact: true }),
+    ).toBeVisible()
+    await local.getByRole('button', { name: '건물 샘플', exact: true }).click()
     await expectColumnBusiness(local)
     await expect(detail(local)).toContainText(note)
     await expect(local.getByLabel('IFC 모델 3D 뷰어', { exact: true })).toBeVisible()
+    await expectNoProjectManagement(local)
+    await expect(local.getByRole('checkbox', { name: '단면상자', exact: true })).toBeChecked()
 
     // Keep the HTML and metadata valid while corrupting just the IFC bytes.
     // Startup must surface the model error rather than silently show the sample.
-    const html = await readFile(secondPath, 'utf8')
+    const html = await readFile(path, 'utf8')
     const invalidBinary = exportedBinary(Buffer.from(html))
     invalidBinary.fill(0x21, 12 + invalidBinary.readUInt32LE(8))
     const invalidPath = testInfo.outputPath('invalid-model-project.html')
@@ -490,7 +493,8 @@ test('downloaded HTML opens and re-exports offline with the saved model, data, f
     await expect(local.getByRole('alert')).toContainText('유효한 IFC STEP 파일이 아닙니다.', {
       timeout: 45_000,
     })
-    await expect(local.getByTestId('current-project-name')).toHaveText('저장되지 않은 프로젝트')
+    await expect(members(local).locator('tbody tr')).toHaveCount(72)
+    await expectNoProjectManagement(local)
     expect(networkRequests).toEqual([])
     expect(errors).toEqual([])
   } finally {

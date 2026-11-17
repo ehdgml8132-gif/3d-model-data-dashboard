@@ -150,6 +150,7 @@ class BuildingSceneBoundary extends Component<{ children: ReactNode }, { failed:
 }
 
 export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () => void }) {
+  const exportedProject = document.documentElement.dataset.monospaceProject === '1'
   const [metricFilters, setMetricFilters] = useSessionState<BuildingMetricFilters>(
     'building:metric-filters',
     createBuildingMetricFilters,
@@ -653,25 +654,27 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
               </button>
             </div>
           </section>
-          <ProjectManager
-            available={ifcModel !== null && sourceIfcFile !== null}
-            disabled={progress !== null}
-            current={currentProject}
-            currentStored={currentProjectStored}
-            getSnapshot={projectSnapshot}
-            onOpened={openProject}
-            onSaved={(summary) => {
-              // A pending save may finish after another model replaces this workspace.
-              if (cameraGeneration.current !== modelVersion) return
-              setCurrentProject(summary)
-              setCurrentProjectStored(true)
-            }}
-            onDeleted={(id) => {
-              if (currentProject?.id === id) setCurrentProjectStored(false)
-            }}
-            onCancelOpen={cancelImport}
-            progress={progress}
-          />
+          {!exportedProject && (
+            <ProjectManager
+              available={ifcModel !== null && sourceIfcFile !== null}
+              disabled={progress !== null}
+              current={currentProject}
+              currentStored={currentProjectStored}
+              getSnapshot={projectSnapshot}
+              onOpened={openProject}
+              onSaved={(summary) => {
+                // A pending save may finish after another model replaces this workspace.
+                if (cameraGeneration.current !== modelVersion) return
+                setCurrentProject(summary)
+                setCurrentProjectStored(true)
+              }}
+              onDeleted={(id) => {
+                if (currentProject?.id === id) setCurrentProjectStored(false)
+              }}
+              onCancelOpen={cancelImport}
+              progress={progress}
+            />
+          )}
           <input
             ref={ifcInput}
             type="file"

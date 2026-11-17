@@ -95,7 +95,13 @@ export async function encodeProjectHtml(project: SavedProject, template: string)
     }
     return entities[character]
   })
-  const html = template.replace(/<title\b[^>]*>[\s\S]*?<\/title>/i, () => `<title>${title}</title>`)
+  const html = template
+    .replace(
+      /<html\b([^>]*)>/i,
+      (_tag, attributes: string) =>
+        `<html${attributes.replace(/\sdata-monospace-project="[^"]*"/gi, '')} data-monospace-project="1">`,
+    )
+    .replace(/<title\b[^>]*>[\s\S]*?<\/title>/i, () => `<title>${title}</title>`)
   const head = /<head\b[^>]*>/i.exec(html.slice(0, HTML_PREFIX_BYTES))
   if (!head) throw new Error('HTML 뷰어의 문서 형식이 올바르지 않습니다.')
   const insertion = head.index + head[0].length

@@ -65,6 +65,8 @@ describe('self-contained HTML project data', () => {
     expect(blob.type).toBe(PROJECT_HTML_MIME)
     const html = await blob.text()
     expect(html).toMatch(/^<!doctype html>/)
+    expect(html).toMatch(/<html\b[^>]*data-monospace-project="1"/)
+    expect(template).not.toContain('data-monospace-project=')
     expect(html).toContain('<title>서울 현장 · 공정 검토</title>')
     expect(html).toContain('id="monospace-app"')
     expect(html).toContain('id="monospace-styles"')

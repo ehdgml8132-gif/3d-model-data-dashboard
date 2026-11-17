@@ -43,6 +43,7 @@ ${favicon}
 
 async function fetchTemplate(): Promise<string> {
   const response = await fetch(`${import.meta.env.BASE_URL}monospace-building-preview.html`, {
+    cache: 'no-cache',
     signal: AbortSignal.timeout(60_000),
   })
   if (!response.ok) throw new Error('HTML 뷰어 파일을 불러오지 못했습니다. 다시 시도해 주세요.')
