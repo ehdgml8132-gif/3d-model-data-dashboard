@@ -501,6 +501,9 @@
   gap: 15px;
   margin-bottom: 17px;
 }
+.building-app.has-ifc .building-controls {
+  justify-content: flex-end;
+}
 .building-floor-control {
   display: flex;
   align-items: center;

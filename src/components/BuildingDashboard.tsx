@@ -752,29 +752,33 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
             </section>
           )}
           <div className="building-controls">
-            <div className="building-floor-control">
-              <Layers3 size={16} />
-              <span>표시할 층</span>
-              <div className="building-floor-buttons" role="group" aria-label="건물 층 선택">
-                <button
-                  className={metricFilters.floors === null ? 'active' : ''}
-                  aria-pressed={metricFilters.floors === null}
-                  onClick={() => setMetricFilters((current) => ({ ...current, floors: null }))}
-                >
-                  전체
-                </button>
-                {floors.map((value) => (
+            {!ifcModel && (
+              <div className="building-floor-control">
+                <Layers3 size={16} />
+                <span>표시할 층</span>
+                <div className="building-floor-buttons" role="group" aria-label="건물 층 선택">
                   <button
-                    key={value}
-                    className={metricFilters.floors?.includes(value) ? 'active' : ''}
-                    aria-pressed={metricFilters.floors?.includes(value) ?? false}
-                    onClick={() => setMetricFilters((current) => ({ ...current, floors: [value] }))}
+                    className={metricFilters.floors === null ? 'active' : ''}
+                    aria-pressed={metricFilters.floors === null}
+                    onClick={() => setMetricFilters((current) => ({ ...current, floors: null }))}
                   >
-                    {floorLabel(value)}
+                    전체
                   </button>
-                ))}
+                  {floors.map((value) => (
+                    <button
+                      key={value}
+                      className={metricFilters.floors?.includes(value) ? 'active' : ''}
+                      aria-pressed={metricFilters.floors?.includes(value) ?? false}
+                      onClick={() =>
+                        setMetricFilters((current) => ({ ...current, floors: [value] }))
+                      }
+                    >
+                      {floorLabel(value)}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
             <span className="building-filter-note">카드 아이콘을 눌러 표시 조건을 선택하세요.</span>
           </div>
           <section className="metrics building-metrics" aria-label="건물 집계 지표">

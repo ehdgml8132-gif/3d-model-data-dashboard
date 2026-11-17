@@ -26,6 +26,13 @@ async function openBuilding(page: Page) {
   await expect(page.getByRole('heading', { name: '건물 모델 대시보드', exact: true })).toBeVisible()
 }
 
+async function openFloorFilter(page: Page) {
+  await page.getByRole('button', { name: '표시 층 필터', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '표시 층 필터', exact: true })
+  await expect(dialog).toBeVisible()
+  return dialog
+}
+
 async function importIfc(
   page: Page,
   name = 'authored-building.ifc',
@@ -43,6 +50,7 @@ async function importIfc(
   await expect(page.getByText(`업로드한 IFC 모델 · ${name}`, { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '업로드 취소', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '샘플로 돌아가기', exact: true })).toBeVisible()
+  await expect(page.getByRole('group', { name: '건물 층 선택', exact: true })).toHaveCount(0)
 }
 
 async function selectColumn(page: Page) {
@@ -160,15 +168,16 @@ test('official IFC geometry uses Revit-style Pset volumes for member cards, tabl
     'First floor concrete slab',
     'Steel beam 1',
   ]).toContain(clickedName)
-  await expect(page.getByRole('group', { name: '건물 층 선택' })).toContainText('Ground floor')
-  await expect(page.getByRole('group', { name: '건물 층 선택' })).toContainText('First floor')
-  await page
-    .getByRole('group', { name: '건물 층 선택' })
-    .getByRole('button', { name: 'First floor', exact: true })
-    .click()
+  const floors = await openFloorFilter(page)
+  await expect(floors.getByRole('checkbox', { name: 'Ground floor', exact: true })).toBeVisible()
+  await expect(floors.getByRole('checkbox', { name: 'First floor', exact: true })).toBeVisible()
+  await floors.getByRole('checkbox', { name: 'First floor', exact: true }).check()
+  await floors.getByRole('checkbox', { name: 'Ground floor', exact: true }).uncheck()
+  await floors.getByRole('button', { name: '완료', exact: true }).click()
   await expect(members(page).locator('tbody tr')).toHaveCount(3)
   await page.getByRole('button', { name: '샘플로 돌아가기', exact: true }).click()
   await expect(members(page).locator('tbody tr')).toHaveCount(72)
+  await expect(page.getByRole('group', { name: '건물 층 선택', exact: true })).toBeVisible()
   await importIfc(page, 'reopened.ifc')
   await selectColumn(page)
   await expect(canvas).toBeVisible()
@@ -396,10 +405,10 @@ test('a real 206-element IFC bounds table rows while keeping paging, off-page se
   await expect(members(page)).toContainText('Pagination column 201')
   await expect(pager).toHaveCount(0)
   await page.getByRole('textbox', { name: '부재 검색', exact: true }).fill('')
-  await page
-    .getByRole('group', { name: '건물 층 선택' })
-    .getByRole('button', { name: 'First floor', exact: true })
-    .click()
+  const floors = await openFloorFilter(page)
+  await floors.getByRole('checkbox', { name: 'First floor', exact: true }).check()
+  await floors.getByRole('checkbox', { name: 'Ground floor', exact: true }).uncheck()
+  await floors.getByRole('button', { name: '완료', exact: true }).click()
   await expect(members(page).locator('tbody tr')).toHaveCount(3)
   await expect(summary).toHaveText('3개')
   await expect(pager).toHaveCount(0)

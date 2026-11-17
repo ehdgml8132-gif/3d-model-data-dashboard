@@ -21,6 +21,28 @@ async function openBuilding(page: Page) {
   await expect(page.getByRole('heading', { name: '건물 모델 대시보드', exact: true })).toBeVisible()
 }
 
+async function openFloorFilter(page: Page) {
+  await page.getByRole('button', { name: '표시 층 필터', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '표시 층 필터', exact: true })
+  await expect(dialog).toBeVisible()
+  return dialog
+}
+
+async function selectGroundFloor(page: Page) {
+  const dialog = await openFloorFilter(page)
+  await dialog.getByRole('checkbox', { name: 'Ground floor', exact: true }).check()
+  await dialog.getByRole('checkbox', { name: 'First floor', exact: true }).uncheck()
+  await dialog.getByRole('button', { name: '완료', exact: true }).click()
+}
+
+async function expectGroundFloor(page: Page) {
+  await expect(page.getByRole('group', { name: '건물 층 선택', exact: true })).toHaveCount(0)
+  const dialog = await openFloorFilter(page)
+  await expect(dialog.getByRole('checkbox', { name: 'Ground floor', exact: true })).toBeChecked()
+  await expect(dialog.getByRole('checkbox', { name: 'First floor', exact: true })).not.toBeChecked()
+  await dialog.getByRole('button', { name: '완료', exact: true }).click()
+}
+
 async function importIfc(page: Page) {
   await page.getByLabel('IFC 파일 선택', { exact: true }).setInputFiles({
     name: 'authored-building.ifc',
@@ -32,6 +54,7 @@ async function importIfc(page: Page) {
     page.getByText('업로드한 IFC 모델 · authored-building.ifc', { exact: true }),
   ).toBeVisible()
   await expect(page.getByRole('button', { name: '업로드 취소', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('group', { name: '건물 층 선택', exact: true })).toHaveCount(0)
 }
 
 async function connectBusiness(page: Page, note?: string) {
@@ -201,10 +224,7 @@ test('named browser projects survive reload and Save As keeps independent worksp
   await topFace.press('End')
   for (let index = 0; index < 3; index++) await topFace.press('Shift+ArrowDown')
   await expect(topFace.locator('.section-face-value')).toHaveText('70%')
-  await page
-    .getByRole('group', { name: '건물 층 선택' })
-    .getByRole('button', { name: 'Ground floor', exact: true })
-    .click()
+  await selectGroundFloor(page)
   const savedMin = await canvas.getAttribute('data-section-min')
   const savedMax = await canvas.getAttribute('data-section-max')
   await showData(page, 'Round concrete')
@@ -229,11 +249,7 @@ test('named browser projects survive reload and Save As keeps independent worksp
   )
   await expect(page.getByLabel('부재 종류', { exact: true })).toHaveValue('column')
   await expect(members(page).locator('tbody tr')).toHaveCount(1)
-  await expect(
-    page
-      .getByRole('group', { name: '건물 층 선택' })
-      .getByRole('button', { name: 'Ground floor', exact: true }),
-  ).toHaveAttribute('aria-pressed', 'true')
+  await expectGroundFloor(page)
 
   await menu(page).getByRole('button', { name: '공간 데이터', exact: true }).click()
   await expectColumnBusiness(page)
@@ -383,10 +399,7 @@ test('downloaded HTML restores the offline workspace without project management 
   await topFace.press('End')
   await topFace.press('Shift+ArrowDown')
   await expect(topFace.locator('.section-face-value')).toHaveText('90%')
-  await page
-    .getByRole('group', { name: '건물 층 선택' })
-    .getByRole('button', { name: 'Ground floor', exact: true })
-    .click()
+  await selectGroundFloor(page)
   const bounds = (await canvas.boundingBox())!
   await page.mouse.move(bounds.x + bounds.width * 0.5, bounds.y + bounds.height * 0.5)
   await page.mouse.down({ button: 'right' })
@@ -435,11 +448,7 @@ test('downloaded HTML restores the offline workspace without project management 
     )
     await expect(local.getByLabel('부재 종류', { exact: true })).toHaveValue('column')
     await expect(members(local).locator('tbody tr')).toHaveCount(1)
-    await expect(
-      local
-        .getByRole('group', { name: '건물 층 선택' })
-        .getByRole('button', { name: 'Ground floor', exact: true }),
-    ).toHaveAttribute('aria-pressed', 'true')
+    await expectGroundFloor(local)
     await menu(local).getByRole('button', { name: '공간 데이터', exact: true }).click()
     await expectColumnBusiness(local)
     await expect(detail(local)).toContainText(note)
