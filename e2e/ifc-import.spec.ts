@@ -270,6 +270,103 @@ test('official IFC geometry uses Revit-style Pset volumes for member cards, tabl
   expect(errors).toEqual([])
 })
 
+test('transparent IFC lowers rendering resolution during camera motion and restores it at rest', async ({
+  page,
+}) => {
+  await openBuilding(page)
+  await importIfc(page)
+  const canvas = page.getByLabel('IFC 모델 3D 뷰어', { exact: true })
+  const transparency = page.getByRole('slider', { name: '투명도', exact: true })
+  await canvas.scrollIntoViewIfNeeded()
+  const bounds = (await canvas.boundingBox())!
+  const centerX = bounds.x + bounds.width / 2
+  const centerY = bounds.y + bounds.height / 2
+
+  const monitor = await canvas.evaluateHandle((node) => {
+    const element = node as HTMLCanvasElement
+    const size = () => ({
+      renderWidth: element.width,
+      renderHeight: element.height,
+      displayWidth: element.clientWidth,
+      displayHeight: element.clientHeight,
+    })
+    const changes: ReturnType<typeof size>[] = []
+    // Preserve brief resolution changes even if a test polling interval misses them.
+    const observer = new MutationObserver(() => changes.push(size()))
+    observer.observe(element, { attributes: true, attributeFilter: ['width', 'height'] })
+    return { size, changes, observer }
+  })
+
+  const size = () => monitor.evaluate(({ size }) => size())
+  const takeChanges = () => monitor.evaluate(({ changes }) => changes.splice(0))
+  const original = await size()
+  const expectReducedResolution = async () => {
+    await expect
+      .poll(() =>
+        monitor.evaluate(({ changes }) =>
+          Math.min(
+            1,
+            ...changes.map(({ renderWidth, displayWidth }) => renderWidth / displayWidth),
+          ),
+        ),
+      )
+      .toBeCloseTo(0.7, 2)
+  }
+  const rotate = async (duringDrag: () => Promise<void>) => {
+    await page.mouse.move(centerX, centerY)
+    await page.mouse.down()
+    try {
+      await page.mouse.move(centerX + bounds.width * 0.13, centerY - bounds.height * 0.08, {
+        steps: 8,
+      })
+      await duringDrag()
+    } finally {
+      await page.mouse.up()
+    }
+  }
+
+  try {
+    expect(original.renderWidth / original.displayWidth).toBeCloseTo(1, 2)
+    await transparency.fill('50')
+    await expect(transparency).toHaveValue('50')
+    await rotate(expectReducedResolution)
+    await expect.poll(size).toEqual(original)
+    const rotated = await takeChanges()
+
+    await page.mouse.wheel(0, -120)
+    await expectReducedResolution()
+    await expect.poll(size).toEqual(original)
+    const zoomed = await takeChanges()
+    for (const change of [...rotated, ...zoomed]) {
+      expect(change.displayWidth).toBe(original.displayWidth)
+      expect(change.displayHeight).toBe(original.displayHeight)
+    }
+    await expect(transparency).toHaveValue('50')
+
+    await transparency.fill('0')
+    await rotate(async () => expect(await size()).toEqual(original))
+    await page.mouse.wheel(0, 120)
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    )
+    await expect.poll(size).toEqual(original)
+    const opaque = await takeChanges()
+    expect(
+      opaque.every(
+        (change) =>
+          change.renderWidth === original.renderWidth &&
+          change.renderHeight === original.renderHeight,
+      ),
+    ).toBe(true)
+  } finally {
+    await monitor.evaluate(({ observer }) => observer.disconnect())
+    await monitor.dispose()
+  }
+})
+
 test('GlobalId CSV mapping appears on the selected real IFC member in both views', async ({
   page,
 }) => {

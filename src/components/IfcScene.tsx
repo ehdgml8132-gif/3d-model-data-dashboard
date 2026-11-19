@@ -1,4 +1,13 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from 'react'
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { Edges, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
@@ -42,6 +51,9 @@ type PlacedMesh = {
 }
 
 const ignoreRaycast = () => undefined
+const VIEW_DPR: [number, number] = [1, 1.6]
+const MOTION_DPR_SCALE = 0.7
+const VIEW_SETTLE_MS = 180
 
 function prepareModel(model: IfcModel) {
   const geometries = new Map<Float32Array, THREE.BufferGeometry>()
@@ -182,7 +194,7 @@ function IfcMesh({
   )
 }
 
-function ModelContents({
+const ModelContents = memo(function ModelContents({
   model,
   transparency,
   visibleIds,
@@ -280,13 +292,38 @@ function ModelContents({
       )}
     </>
   )
-}
+})
 
 export default function IfcScene(props: Props) {
+  const [viewMoving, setViewMoving] = useState(false)
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const canReduceResolution = props.transparency > 0 && props.transparency < 100
+  const handleViewChange = useCallback(() => {
+    if (!canReduceResolution) return
+    if (settleTimer.current === null) setViewMoving(true)
+    else clearTimeout(settleTimer.current)
+    // OrbitControls emits changes until camera damping settles.
+    settleTimer.current = setTimeout(() => {
+      settleTimer.current = null
+      setViewMoving(false)
+    }, VIEW_SETTLE_MS)
+  }, [canReduceResolution])
+  useEffect(
+    () => () => {
+      if (settleTimer.current !== null) clearTimeout(settleTimer.current)
+      settleTimer.current = null
+    },
+    [],
+  )
+  const dpr =
+    canReduceResolution && viewMoving
+      ? THREE.MathUtils.clamp(window.devicePixelRatio, ...VIEW_DPR) * MOTION_DPR_SCALE
+      : VIEW_DPR
+
   return (
     <Canvas
       orthographic
-      dpr={[1, 1.6]}
+      dpr={dpr}
       camera={{ position: [10, 10, 10], zoom: 1, near: 0.001, far: 1000 }}
       gl={{ antialias: true, alpha: true }}
       onPointerMissed={props.onSectionBoxDeselect}
@@ -306,6 +343,7 @@ export default function IfcScene(props: Props) {
         enableDamping
         minPolarAngle={0.02}
         maxPolarAngle={Math.PI * 0.98}
+        onChange={handleViewChange}
       />
       <ModelContents {...props} />
     </Canvas>
