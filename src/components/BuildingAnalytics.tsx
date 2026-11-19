@@ -293,8 +293,20 @@ export default function BuildingAnalytics({ elements }: Props) {
                     ))}
                   </Pie>
                   <Tooltip
-                    contentStyle={{ border: '1px solid #e2e9da', borderRadius: 9, fontSize: 11 }}
-                    formatter={(value) => `${countFormat.format(Number(value))}개`}
+                    isAnimationActive={false}
+                    wrapperStyle={{ top: '100%', left: '50%', transform: 'translateX(-50%)' }}
+                    content={({ active, payload }) => {
+                      const item = payload?.[0]
+                      return active && item && typeof item.value === 'number' ? (
+                        <div
+                          className="building-analytics-tooltip building-kind-tooltip"
+                          role="tooltip"
+                        >
+                          <strong>{item.name}</strong>
+                          <span>{countFormat.format(item.value)}개</span>
+                        </div>
+                      ) : null
+                    }}
                   />
                 </PieChart>
               </ResponsiveContainer>

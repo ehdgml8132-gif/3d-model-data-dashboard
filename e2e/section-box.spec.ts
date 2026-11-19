@@ -269,3 +269,60 @@ test('graphs remain visible and the slider-free box layout fits a mobile viewpor
   )
   await page.screenshot({ path: '/tmp/revit-section-mobile-outline.png', fullPage: true })
 })
+
+test('donut tooltip stays outside the ring and leaves the total visible on desktop and mobile', async ({
+  page,
+}) => {
+  await openBuilding(page)
+  const card = page.getByRole('article', { name: '부재 종류 구성', exact: true })
+  const chart = card.getByRole('img', { name: '부재 종류별 개수 차트', exact: true })
+  const ring = chart.locator('.recharts-pie')
+  const sector = ring.locator('path.recharts-sector').first()
+  const total = chart.getByText('72', { exact: true })
+  const tooltip = card.getByRole('tooltip')
+
+  for (const width of [1440, 360]) {
+    await test.step(`${width}px viewport`, async () => {
+      await page.setViewportSize({ width, height: 844 })
+      await card.scrollIntoViewIfNeeded()
+      await expect(sector).toBeVisible()
+      const point = await sector.evaluate((node) => {
+        const path = node as SVGGeometryElement
+        const box = path.getBBox()
+        const transform = path.getScreenCTM()!
+        // Locate a filled point on the arc. Its bounding-box center may be in the hole.
+        for (let y = 1; y < 10; y++) {
+          for (let x = 1; x < 10; x++) {
+            const point = new DOMPoint(box.x + (box.width * x) / 10, box.y + (box.height * y) / 10)
+            if (path.isPointInFill(point)) {
+              const screen = point.matrixTransform(transform)
+              return { x: screen.x, y: screen.y }
+            }
+          }
+        }
+        throw new Error('No filled point found in the donut sector')
+      })
+      await page.mouse.move(point.x, point.y)
+      await expect(tooltip).toBeVisible()
+      await expect(tooltip).toContainText('기둥')
+      await expect(tooltip).toContainText('27개')
+      await expect(total).toBeVisible()
+      const tip = (await tooltip.boundingBox())!
+      for (const target of [ring, total]) {
+        const bounds = (await target.boundingBox())!
+        expect(
+          tip.x + tip.width <= bounds.x ||
+            bounds.x + bounds.width <= tip.x ||
+            tip.y + tip.height <= bounds.y ||
+            bounds.y + bounds.height <= tip.y,
+        ).toBe(true)
+      }
+      expect(tip.x).toBeGreaterThanOrEqual(0)
+      expect(tip.x + tip.width).toBeLessThanOrEqual(width)
+      expect(tip.y).toBeGreaterThanOrEqual(0)
+      expect(tip.y + tip.height).toBeLessThanOrEqual(844)
+      await page.mouse.move(0, 0)
+      await expect(tooltip).toHaveCount(0)
+    })
+  }
+})

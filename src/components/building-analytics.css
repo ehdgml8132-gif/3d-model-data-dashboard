@@ -176,6 +176,14 @@
   flex: 0 0 185px;
   height: 185px;
   min-width: 0;
+  margin-bottom: 28px;
+}
+.building-kind-tooltip {
+  flex-direction: row;
+  align-items: baseline;
+  padding: 4px 8px;
+  line-height: 1.5;
+  white-space: nowrap;
 }
 .building-kind-total {
   position: absolute;
