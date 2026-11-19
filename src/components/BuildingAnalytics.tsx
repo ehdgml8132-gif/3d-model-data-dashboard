@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from 'react'
+import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { BarChart3, ChevronLeft, ChevronRight, ChartPie, Info } from 'lucide-react'
 import {
   Bar,
@@ -11,6 +11,9 @@ import {
   Tooltip,
   XAxis,
   YAxis,
+  useChartHeight,
+  useChartWidth,
+  type TooltipContentProps,
 } from 'recharts'
 import './building-analytics.css'
 
@@ -31,6 +34,8 @@ type FloorRow = {
   knownCount: number
 }
 const FLOOR_PAGE_SIZE = 8
+const KIND_OUTER_RADIUS = 73
+const KIND_TOOLTIP_GAP = 7
 const KIND_STYLE = [
   { key: 'column', label: '기둥', color: '#527b63' },
   { key: 'beam', label: '보', color: '#a5bb83' },
@@ -44,6 +49,61 @@ const volumeFormat = new Intl.NumberFormat('ko-KR', {
   maximumFractionDigits: 2,
 })
 const floorLabel = (floor: string) => (/^[123]F$/.test(floor) ? `${floor[0]}층` : floor)
+
+function KindTooltip({
+  active,
+  coordinate,
+  payload,
+}: Pick<TooltipContentProps<number, string>, 'active' | 'coordinate' | 'payload'>) {
+  const width = useChartWidth()
+  const height = useChartHeight()
+  const tooltip = useRef<HTMLDivElement>(null)
+  const item = payload[0]
+  const x = coordinate?.x
+  const y = coordinate?.y
+
+  useLayoutEffect(() => {
+    const element = tooltip.current
+    if (!element || x === undefined || y === undefined || !width || !height) return
+    const centerX = width / 2
+    const centerY = height / 2
+    const dx = x - centerX
+    const dy = y - centerY
+    const length = Math.hypot(dx, dy)
+    if (!length) return
+
+    const halfWidth = element.offsetWidth / 2
+    const halfHeight = element.offsetHeight / 2
+    const outer = KIND_OUTER_RADIUS + KIND_TOOLTIP_GAP
+    const radialDistance = outer + (Math.abs(dx) * halfWidth + Math.abs(dy) * halfHeight) / length
+    const left = Math.max(
+      halfWidth,
+      Math.min(width - halfWidth, centerX + (dx / length) * radialDistance),
+    )
+    let top = Math.max(
+      halfHeight,
+      Math.min(height - halfHeight, centerY + (dy / length) * radialDistance),
+    )
+    const horizontalGap = Math.max(0, Math.abs(left - centerX) - halfWidth)
+    if (horizontalGap < outer) {
+      // A narrow chart may push the tooltip inward. Clear the arc on the same side vertically.
+      const verticalOffset = Math.sqrt(outer ** 2 - horizontalGap ** 2) + halfHeight
+      if (Math.abs(top - centerY) < verticalOffset) {
+        top = centerY + (dy < 0 ? -verticalOffset : verticalOffset)
+      }
+    }
+    element.style.left = `${left}px`
+    element.style.top = `${top}px`
+  }, [active, height, item?.name, item?.value, width, x, y])
+
+  if (!active || !coordinate || typeof item?.value !== 'number') return null
+  return (
+    <div ref={tooltip} className="building-analytics-tooltip building-kind-tooltip" role="tooltip">
+      <strong>{item.name}</strong>
+      <span>{countFormat.format(item.value)}개</span>
+    </div>
+  )
+}
 
 export default function BuildingAnalytics({ elements }: Props) {
   const titleId = useId()
@@ -283,7 +343,7 @@ export default function BuildingAnalytics({ elements }: Props) {
                     dataKey="count"
                     nameKey="label"
                     innerRadius={51}
-                    outerRadius={73}
+                    outerRadius={KIND_OUTER_RADIUS}
                     paddingAngle={data.kinds.length > 1 ? 3 : 0}
                     stroke="none"
                     isAnimationActive={false}
@@ -294,19 +354,8 @@ export default function BuildingAnalytics({ elements }: Props) {
                   </Pie>
                   <Tooltip
                     isAnimationActive={false}
-                    wrapperStyle={{ top: '100%', left: '50%', transform: 'translateX(-50%)' }}
-                    content={({ active, payload }) => {
-                      const item = payload?.[0]
-                      return active && item && typeof item.value === 'number' ? (
-                        <div
-                          className="building-analytics-tooltip building-kind-tooltip"
-                          role="tooltip"
-                        >
-                          <strong>{item.name}</strong>
-                          <span>{countFormat.format(item.value)}개</span>
-                        </div>
-                      ) : null
-                    }}
+                    wrapperStyle={{ width: '100%', height: '100%', transform: 'none' }}
+                    content={(props) => <KindTooltip {...props} />}
                   />
                 </PieChart>
               </ResponsiveContainer>

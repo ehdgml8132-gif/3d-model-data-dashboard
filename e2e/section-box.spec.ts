@@ -270,14 +270,13 @@ test('graphs remain visible and the slider-free box layout fits a mobile viewpor
   await page.screenshot({ path: '/tmp/revit-section-mobile-outline.png', fullPage: true })
 })
 
-test('donut tooltip stays outside the ring and leaves the total visible on desktop and mobile', async ({
+test('donut tooltip follows the hovered slice without covering the ring or total', async ({
   page,
 }) => {
   await openBuilding(page)
   const card = page.getByRole('article', { name: '부재 종류 구성', exact: true })
   const chart = card.getByRole('img', { name: '부재 종류별 개수 차트', exact: true })
-  const ring = chart.locator('.recharts-pie')
-  const sector = ring.locator('path.recharts-sector').first()
+  const sectors = chart.locator('path.recharts-sector')
   const total = chart.getByText('72', { exact: true })
   const tooltip = card.getByRole('tooltip')
 
@@ -285,42 +284,75 @@ test('donut tooltip stays outside the ring and leaves the total visible on deskt
     await test.step(`${width}px viewport`, async () => {
       await page.setViewportSize({ width, height: 844 })
       await card.scrollIntoViewIfNeeded()
-      await expect(sector).toBeVisible()
-      const point = await sector.evaluate((node) => {
-        const path = node as SVGGeometryElement
-        const box = path.getBBox()
-        const transform = path.getScreenCTM()!
-        // Locate a filled point on the arc. Its bounding-box center may be in the hole.
-        for (let y = 1; y < 10; y++) {
-          for (let x = 1; x < 10; x++) {
-            const point = new DOMPoint(box.x + (box.width * x) / 10, box.y + (box.height * y) / 10)
-            if (path.isPointInFill(point)) {
-              const screen = point.matrixTransform(transform)
-              return { x: screen.x, y: screen.y }
-            }
+      const cardBounds = (await card.boundingBox())!
+      for (const [index, name, count] of [
+        [0, '기둥', '27개'],
+        [1, '보', '36개'],
+      ] as const) {
+        const sector = sectors.nth(index)
+        await expect(sector).toBeVisible()
+        const { center, point, radius } = await sector.evaluate((node) => {
+          const path = node as SVGPathElement
+          const cx = Number(path.getAttribute('cx'))
+          const cy = Number(path.getAttribute('cy'))
+          // Recharts draws the outer arc first, then connects to the inner arc.
+          const points = path
+            .getAttribute('d')!
+            .match(/-?[\d.]+/g)!
+            .map(Number)
+          const [startX, startY, outerRadius, , , largeArc, , endX, endY, innerX, innerY] = points
+          const angle =
+            Math.atan2(startY + endY - 2 * cy, startX + endX - 2 * cx) + largeArc * Math.PI
+          const midRadius = (outerRadius + Math.hypot(innerX - cx, innerY - cy)) / 2
+          const transform = path.getScreenCTM()!
+          const screen = (x: number, y: number) => {
+            const point = new DOMPoint(x, y).matrixTransform(transform)
+            return { x: point.x, y: point.y }
           }
+          const center = screen(cx, cy)
+          const edge = screen(cx + outerRadius, cy)
+          return {
+            center,
+            point: screen(cx + Math.cos(angle) * midRadius, cy + Math.sin(angle) * midRadius),
+            radius: Math.hypot(edge.x - center.x, edge.y - center.y),
+          }
+        })
+        await page.mouse.move(point.x, point.y)
+        await expect(tooltip).toBeVisible()
+        await expect(tooltip).toContainText(name)
+        await expect(tooltip).toContainText(count)
+        await expect(total).toBeVisible()
+        const tip = (await tooltip.boundingBox())!
+        const nearestX = Math.max(tip.x, Math.min(center.x, tip.x + tip.width))
+        const nearestY = Math.max(tip.y, Math.min(center.y, tip.y + tip.height))
+        const clearance = Math.hypot(nearestX - center.x, nearestY - center.y) - radius
+        expect(clearance).toBeGreaterThan(1)
+        if (width === 1440) {
+          expect(clearance).toBeLessThan(35)
+          const tipX = tip.x + tip.width / 2 - center.x
+          const tipY = tip.y + tip.height / 2 - center.y
+          const sliceX = point.x - center.x
+          const sliceY = point.y - center.y
+          const alignment =
+            (tipX * sliceX + tipY * sliceY) / (Math.hypot(tipX, tipY) * Math.hypot(sliceX, sliceY))
+          expect(alignment).toBeGreaterThan(0.9)
         }
-        throw new Error('No filled point found in the donut sector')
-      })
-      await page.mouse.move(point.x, point.y)
-      await expect(tooltip).toBeVisible()
-      await expect(tooltip).toContainText('기둥')
-      await expect(tooltip).toContainText('27개')
-      await expect(total).toBeVisible()
-      const tip = (await tooltip.boundingBox())!
-      for (const target of [ring, total]) {
-        const bounds = (await target.boundingBox())!
+        const bounds = (await total.boundingBox())!
         expect(
           tip.x + tip.width <= bounds.x ||
             bounds.x + bounds.width <= tip.x ||
             tip.y + tip.height <= bounds.y ||
             bounds.y + bounds.height <= tip.y,
         ).toBe(true)
+        expect(tip.x).toBeGreaterThanOrEqual(Math.max(0, cardBounds.x))
+        expect(tip.x + tip.width).toBeLessThanOrEqual(
+          Math.min(width, cardBounds.x + cardBounds.width),
+        )
+        expect(tip.y).toBeGreaterThanOrEqual(Math.max(0, cardBounds.y))
+        expect(tip.y + tip.height).toBeLessThanOrEqual(
+          Math.min(844, cardBounds.y + cardBounds.height),
+        )
       }
-      expect(tip.x).toBeGreaterThanOrEqual(0)
-      expect(tip.x + tip.width).toBeLessThanOrEqual(width)
-      expect(tip.y).toBeGreaterThanOrEqual(0)
-      expect(tip.y + tip.height).toBeLessThanOrEqual(844)
       await page.mouse.move(0, 0)
       await expect(tooltip).toHaveCount(0)
     })
