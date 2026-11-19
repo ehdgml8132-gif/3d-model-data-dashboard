@@ -392,6 +392,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
     setBusiness(null)
     setBusinessOpen(false)
     clearFilters()
+    setActiveView('space')
     setSelectedId('')
     setResetKey((value) => value + 1)
     setImportError('')
@@ -707,6 +708,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
               currentStored={currentProjectStored}
               getSnapshot={projectSnapshot}
               onOpened={openProject}
+              onOpenSample={restoreSample}
               onSaved={(summary) => {
                 // A pending save may finish after another model replaces this workspace.
                 if (cameraGeneration.current !== modelVersion) return

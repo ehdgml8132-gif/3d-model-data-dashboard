@@ -111,6 +111,15 @@ async function openSaved(page: Page, name: string, file = 'authored-building.ifc
   await expect(page.getByText(`업로드한 IFC 모델 · ${file}`, { exact: true })).toBeVisible()
 }
 
+async function openDefaultSample(page: Page) {
+  const dialog = await projectList(page)
+  await dialog.getByRole('button', { name: '기본 건물 샘플 열기', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(page.getByTestId('current-project-name')).toHaveText('기본 건물 샘플')
+  await expect(page.getByRole('heading', { name: '건물 모델 대시보드', exact: true })).toBeVisible()
+  await expect(page.getByLabel('건물 모델 3D 뷰어', { exact: true })).toBeVisible()
+}
+
 async function expectColumnBusiness(page: Page) {
   await expect(detail(page)).toContainText(columnGuid)
   await expect(detail(page)).toContainText('Installed')
@@ -216,7 +225,7 @@ async function openDownloadedHtml(page: Page, path: string, testInfo: TestInfo) 
   }
 }
 
-test('each IFC upload is saved separately and can be reopened from the unchanged building sample', async ({
+test('the project picker opens the original building sample and each separate IFC upload', async ({
   page,
 }) => {
   await openBuilding(page)
@@ -227,10 +236,13 @@ test('each IFC upload is saved separately and can be reopened from the unchanged
   await expect(page.getByTestId('current-project-name')).toHaveText('동관')
   await importIfc(page, '서관.IFC')
   await expect(page.getByTestId('current-project-name')).toHaveText('서관')
+  await showData(page, columnName)
+  await expect(members(page).locator('tbody tr')).toHaveCount(1)
 
-  await page.getByRole('button', { name: '샘플로 돌아가기', exact: true }).click()
-  await expect(page.getByLabel('건물 모델 3D 뷰어', { exact: true })).toBeVisible()
-  await expect(page.getByTestId('current-project-name')).toHaveText('저장되지 않은 프로젝트')
+  await openDefaultSample(page)
+  await expect(
+    toolbar(page).getByRole('button', { name: '프로젝트 저장', exact: true }),
+  ).toBeDisabled()
   await expect.poll(() => members(page).locator('tbody tr').allTextContents()).toEqual(sampleRows)
 
   await page.reload()
@@ -241,6 +253,8 @@ test('each IFC upload is saved separately and can be reopened from the unchanged
   await expect(page.getByTestId('current-project-name')).toHaveText('동관')
   await expect(page.getByText('업로드한 IFC 모델 · 동관.ifc', { exact: true })).toBeVisible()
   await expect(members(page).locator('tbody tr')).toHaveCount(5)
+  await openDefaultSample(page)
+  await expect.poll(() => members(page).locator('tbody tr').allTextContents()).toEqual(sampleRows)
   await openSaved(page, '서관', '서관.IFC')
   await expect(members(page).locator('tbody tr')).toHaveCount(5)
 })
@@ -258,6 +272,7 @@ test('IFC stays open and can be saved manually after an automatic save runs out 
 
   const list = await projectList(page)
   await expect(list.getByText('저장한 프로젝트가 없습니다.', { exact: true })).toBeVisible()
+  await expect(list.getByRole('button', { name: '기본 건물 샘플 열기', exact: true })).toBeVisible()
   await list.getByRole('button', { name: '프로젝트 열기 창 닫기', exact: true }).click()
   await toolbar(page).getByRole('button', { name: '프로젝트 저장', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '프로젝트 저장', exact: true })
@@ -635,7 +650,7 @@ test('a quota error aborts the whole overwrite and leaves the previous browser p
   await expect(
     toolbar(page).getByRole('button', { name: '프로젝트 열기', exact: true }),
   ).toBeEnabled()
-  await expect(page.getByTestId('current-project-name')).toHaveText('저장되지 않은 프로젝트')
+  await expect(page.getByTestId('current-project-name')).toHaveText('기본 건물 샘플')
   await expect(members(page).locator('tbody tr')).toHaveCount(72)
   await expect(
     page.getByText('업로드한 IFC 모델 · authored-building.ifc', { exact: true }),

@@ -32,6 +32,7 @@ type Props = {
   currentStored?: boolean
   getSnapshot: () => ProjectSnapshot
   onOpened: (record: SavedProject, source?: 'browser' | 'file') => Promise<void>
+  onOpenSample: () => void
   onSaved: (summary: ProjectSummary) => void
   onDeleted?: (id: string) => void
   onCancelOpen: () => void
@@ -41,6 +42,7 @@ type Modal = 'name' | 'open' | null
 type NameAction = 'save' | 'copy' | 'export'
 type Operation = 'save' | 'open' | 'export' | 'delete' | null
 
+const SAMPLE_NAME = '기본 건물 샘플'
 const dateFormat = new Intl.DateTimeFormat('ko-KR', {
   timeZone: 'Asia/Seoul',
   dateStyle: 'medium',
@@ -75,6 +77,7 @@ export default function ProjectManager({
   currentStored = true,
   getSnapshot,
   onOpened,
+  onOpenSample,
   onSaved,
   onDeleted,
   onCancelOpen,
@@ -368,7 +371,7 @@ export default function ProjectManager({
           </span>
           <div className="project-identity-copy">
             <strong data-testid="current-project-name">
-              {current?.name || '저장되지 않은 프로젝트'}
+              {current?.name ?? (available ? '저장되지 않은 프로젝트' : SAMPLE_NAME)}
             </strong>
             <small>
               {current
@@ -545,7 +548,7 @@ export default function ProjectManager({
             </button>
           </div>
           <p className="modal-description project-modal-description">
-            이 브라우저에 저장한 프로젝트를 다시 열거나, 내려받은 프로젝트 파일을 선택하세요.
+            기본 건물 샘플, 이 브라우저에 저장한 프로젝트, 내려받은 프로젝트 파일을 열 수 있습니다.
           </p>
           <div className="project-file-actions">
             <button
@@ -564,6 +567,27 @@ export default function ProjectManager({
             </p>
           )}
           {progressView}
+          <div className="project-list-item">
+            <div className="project-list-info">
+              <strong>{SAMPLE_NAME}</strong>
+              <span>3층 사무동 예제</span>
+            </div>
+            <div className="project-list-actions">
+              <button
+                type="button"
+                className="button primary"
+                aria-label={`${SAMPLE_NAME} 열기`}
+                disabled={blocked}
+                onClick={() => {
+                  onOpenSample()
+                  closeModal()
+                }}
+              >
+                <FolderOpen size={14} />
+                열기
+              </button>
+            </div>
+          </div>
           <div className="project-modal-subheading">
             <h3>이 브라우저의 저장 목록</h3>
             <button
