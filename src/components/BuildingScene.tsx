@@ -147,20 +147,12 @@ function FrameCamera({ floor, resetKey }: { floor: FloorFilter; resetKey: number
       controls && 'target' in controls
         ? (controls as unknown as {
             target: THREE.Vector3
-            enableDamping: boolean
             minZoom: number
             maxZoom: number
             update: () => void
           })
         : null
-    const damping = orbit?.enableDamping
-    if (orbit) {
-      // Flush the previous drag/zoom inertia before applying the new framing.
-      // Otherwise the next animation frame rotates away from the reset view.
-      orbit.enableDamping = false
-      orbit.update()
-      orbit.target.set(0, targetY, 0)
-    }
+    orbit?.target.set(0, targetY, 0)
     camera.position.set(14, targetY + 12, 16)
     camera.lookAt(0, targetY, 0)
     if (camera instanceof THREE.OrthographicCamera) {
@@ -173,7 +165,6 @@ function FrameCamera({ floor, resetKey }: { floor: FloorFilter; resetKey: number
       orbit.minZoom = 13
       orbit.maxZoom = 100
       orbit.update()
-      orbit.enableDamping = damping ?? true
     }
   }, [camera, controls, floor, resetKey, size.width, size.height])
   return null
@@ -277,6 +268,7 @@ export default function BuildingScene({
       </mesh>
       <OrbitControls
         makeDefault
+        enableDamping={false}
         target={[0, 4.4, 0]}
         enablePan={Boolean(sectionBox)}
         minZoom={13}

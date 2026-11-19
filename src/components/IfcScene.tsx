@@ -302,7 +302,7 @@ export default function IfcScene(props: Props) {
     if (!canReduceResolution) return
     if (settleTimer.current === null) setViewMoving(true)
     else clearTimeout(settleTimer.current)
-    // OrbitControls emits changes until camera damping settles.
+    // Keep the lower resolution between consecutive camera updates.
     settleTimer.current = setTimeout(() => {
       settleTimer.current = null
       setViewMoving(false)
@@ -340,7 +340,7 @@ export default function IfcScene(props: Props) {
       <OrbitControls
         makeDefault
         enablePan
-        enableDamping
+        enableDamping={false}
         minPolarAngle={0.02}
         maxPolarAngle={Math.PI * 0.98}
         onChange={handleViewChange}

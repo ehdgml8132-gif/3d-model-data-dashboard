@@ -270,6 +270,56 @@ test('official IFC geometry uses Revit-style Pset volumes for member cards, tabl
   expect(errors).toEqual([])
 })
 
+test('building and IFC views stop rotating when the mouse stops', async ({ page }) => {
+  async function verifyRotation(viewerName: string) {
+    const canvas = page.getByLabel(viewerName, { exact: true })
+    await canvas.scrollIntoViewIfNeeded()
+    const initial = await canvas.screenshot()
+    const bounds = (await canvas.boundingBox())!
+
+    async function captureAfterFrames() {
+      // Give any remaining orbit motion time to render while the mouse is still.
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            let remaining = 6
+            function nextFrame() {
+              if (--remaining === 0) resolve()
+              else requestAnimationFrame(nextFrame)
+            }
+            requestAnimationFrame(nextFrame)
+          }),
+      )
+      return canvas.screenshot()
+    }
+
+    await page.mouse.move(bounds.x + bounds.width * 0.45, bounds.y + bounds.height * 0.5)
+    await page.mouse.down()
+    let stopped: Buffer
+    try {
+      await page.mouse.move(bounds.x + bounds.width * 0.6, bounds.y + bounds.height * 0.43, {
+        steps: 8,
+      })
+      stopped = await canvas.screenshot()
+      expect(stopped.equals(initial), `${viewerName} rotates during the drag`).toBe(false)
+      expect((await captureAfterFrames()).equals(stopped), `${viewerName} stops while held`).toBe(
+        true,
+      )
+    } finally {
+      await page.mouse.up()
+    }
+    expect(
+      (await captureAfterFrames()).equals(stopped),
+      `${viewerName} stays still on release`,
+    ).toBe(true)
+  }
+
+  await openBuilding(page)
+  await verifyRotation('건물 모델 3D 뷰어')
+  await importIfc(page)
+  await verifyRotation('IFC 모델 3D 뷰어')
+})
+
 test('transparent IFC lowers rendering resolution during camera motion and restores it at rest', async ({
   page,
 }) => {

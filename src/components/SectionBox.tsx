@@ -125,18 +125,12 @@ export function FrameBoxCamera({ bounds, resetKey }: { bounds: THREE.Box3; reset
       controls && 'target' in controls
         ? (controls as unknown as {
             target: THREE.Vector3
-            enableDamping: boolean
             minZoom: number
             maxZoom: number
             update: () => void
           })
         : null
-    const damping = orbit?.enableDamping
-    if (orbit) {
-      orbit.enableDamping = false
-      orbit.update()
-      orbit.target.copy(center)
-    }
+    orbit?.target.copy(center)
     camera.position.copy(center).addScaledVector(viewDirection, diameter * 1.5)
     camera.near = Math.max(diameter / 10000, 0.00001)
     camera.far = diameter * 20
@@ -159,7 +153,6 @@ export function FrameBoxCamera({ bounds, resetKey }: { bounds: THREE.Box3; reset
       orbit.minZoom = camera.zoom / 30
       orbit.maxZoom = camera.zoom * 100
       orbit.update()
-      orbit.enableDamping = damping ?? true
     }
   }, [camera, controls, bounds, resetKey, size.width, size.height])
   return null

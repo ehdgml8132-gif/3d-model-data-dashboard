@@ -12,7 +12,6 @@ type Props = {
 
 type Orbit = {
   target: THREE.Vector3
-  enableDamping: boolean
   minZoom: number
   maxZoom: number
   update: () => void
@@ -85,12 +84,8 @@ export default function ProjectCameraSync({ restore, restoreKey, onChange, captu
 
     const pose = latest.current.restore
     restoring.current = true
-    const damping = orbit.enableDamping
     try {
       if (validPose(pose)) {
-        // Consume previous drag inertia before installing the saved target.
-        orbit.enableDamping = false
-        orbit.update()
         orbit.target.fromArray(pose.target)
         camera.position.fromArray(pose.position)
         camera.zoom =
@@ -104,7 +99,6 @@ export default function ProjectCameraSync({ restore, restoreKey, onChange, captu
       }
       applied.current = { camera, orbit, key: restoreKey }
     } finally {
-      orbit.enableDamping = damping
       restoring.current = false
     }
     publish()
@@ -116,8 +110,7 @@ export default function ProjectCameraSync({ restore, restoreKey, onChange, captu
     const changed = () => {
       if (restoring.current) return
       if (timer !== undefined) clearTimeout(timer)
-      // Orbit damping emits changes on each frame. Persist only a settled
-      // snapshot; Save can still read the exact current pose through captureRef.
+      // Coalesce consecutive input events. Save can still capture the current pose.
       timer = setTimeout(() => {
         timer = undefined
         publish()
