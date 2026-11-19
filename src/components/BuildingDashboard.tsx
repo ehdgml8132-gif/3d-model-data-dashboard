@@ -45,7 +45,7 @@ import BuildingAnalytics, { BuildingAnalyticsNote } from './BuildingAnalytics'
 import BuildingMetricFilter from './BuildingMetricFilter'
 import ProjectManager from './ProjectManager'
 import { joinBusinessRows } from '../lib/business'
-import { summarizeProject } from '../projects/storage'
+import { buildProjectRecord, summarizeProject, writeProject } from '../projects/storage'
 import { embeddedProjectToOpen, finishEmbeddedProject } from '../projects/standalone'
 import type {
   ProjectCamera,
@@ -271,6 +271,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
 
   async function importIfc(file?: File) {
     if (!file) return
+    if (ifcInput.current) ifcInput.current.value = ''
     importRequest.current?.controller.abort()
     importRequest.current = null
     setProgress(null)
@@ -296,23 +297,67 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
         },
       })
       if (controller.signal.aborted || importRequest.current?.token !== token) return
+      const workspace: ProjectSnapshot['workspace'] = {
+        activeView,
+        metricFilters: createBuildingMetricFilters(),
+        kind: 'all',
+        query: '',
+        selectedId: '',
+        sectionBox: null,
+        camera: null,
+        tablePage: 0,
+      }
+      let saved: ProjectSummary | null = null
+      let saveError = ''
+      if (!exportedProject) {
+        setProgress({ percent: 100, message: 'IFC 모델을 새 프로젝트로 저장하고 있습니다.' })
+        try {
+          const name =
+            file.name
+              .replace(/\.ifc$/i, '')
+              .trim()
+              .slice(0, 120) || 'IFC 프로젝트'
+          const record = buildProjectRecord(name, {
+            ifcFile: file,
+            elementCount: model.elements.length,
+            business: null,
+            workspace,
+          })
+          await writeProject(record, controller.signal)
+          saved = summarizeProject(record)
+        } catch (cause) {
+          saveError =
+            cause instanceof Error
+              ? cause.message
+              : '프로젝트 저장을 다시 시도하거나 파일로 내보내 주세요.'
+        }
+      }
+      if (controller.signal.aborted || importRequest.current?.token !== token) return
+
       cameraGeneration.current += 1
       setIfcModel(model)
       setSourceIfcFile(file)
-      setCurrentProject(null)
-      setCurrentProjectStored(false)
-      setCameraPose(null)
-      setSectionBox(null)
+      setCurrentProject(saved)
+      setCurrentProjectStored(saved !== null)
+      setCameraPose(workspace.camera)
+      setSectionBox(workspace.sectionBox)
       setSectionBoxSelected(false)
       setModelVersion((value) => value + 1)
       setBusiness(null)
       setBusinessOpen(false)
-      clearFilters()
-      setSelectedId('')
+      setMetricFilters(workspace.metricFilters)
+      setKind(workspace.kind)
+      setQuery(workspace.query)
+      setSelectedId(workspace.selectedId)
+      setTablePage(workspace.tablePage)
       setResetKey((value) => value + 1)
-      setImportNotice(
-        `${model.name} 모델을 불러왔습니다. 업무 데이터 연결은 새 모델에 맞게 다시 설정해주세요.`,
-      )
+      if (saveError) setImportError(`IFC 모델을 열었지만 자동 저장하지 못했습니다. ${saveError}`)
+      else
+        setImportNotice(
+          saved
+            ? `‘${saved.name}’ 프로젝트를 이 브라우저에 저장했습니다. ‘프로젝트 열기’에서 다시 열 수 있습니다.`
+            : `${model.name} 모델을 불러왔습니다.`,
+        )
     } catch (cause) {
       if (importRequest.current?.token === token && !controller.signal.aborted)
         setImportError(
@@ -325,7 +370,6 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
         importRequest.current = null
         setProgress(null)
       }
-      if (ifcInput.current) ifcInput.current.value = ''
     }
   }
   function cancelImport() {
@@ -668,6 +712,8 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
                 if (cameraGeneration.current !== modelVersion) return
                 setCurrentProject(summary)
                 setCurrentProjectStored(true)
+                setImportError('')
+                setImportNotice('')
               }}
               onDeleted={(id) => {
                 if (currentProject?.id === id) setCurrentProjectStored(false)

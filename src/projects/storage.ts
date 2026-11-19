@@ -73,9 +73,13 @@ async function transaction<T>(
   stores: string[],
   mode: IDBTransactionMode,
   work: (tx: IDBTransaction, result: (value: T) => void) => void,
+  signal?: AbortSignal,
 ): Promise<T> {
+  signal?.throwIfAborted()
   const database = await openDatabase()
+  let abort: (() => void) | undefined
   try {
+    signal?.throwIfAborted()
     return await new Promise<T>((resolve, reject) => {
       let tx: IDBTransaction
       let result: T
@@ -85,8 +89,16 @@ async function transaction<T>(
         reject(storageError(error))
         return
       }
+      abort = () => {
+        try {
+          tx.abort()
+        } catch {
+          /* A completed transaction can no longer be aborted. */
+        }
+      }
+      signal?.addEventListener('abort', abort, { once: true })
       tx.oncomplete = () => resolve(result)
-      tx.onabort = () => reject(storageError(tx.error))
+      tx.onabort = () => reject(signal?.aborted ? signal.reason : storageError(tx.error))
       try {
         work(tx, (value) => {
           result = value
@@ -101,6 +113,7 @@ async function transaction<T>(
       }
     })
   } finally {
+    if (abort) signal?.removeEventListener('abort', abort)
     database.close()
   }
 }
@@ -156,13 +169,18 @@ export async function readProject(id: string): Promise<SavedProject> {
 }
 
 /** Both stores commit together, so quota/error never replaces only half a save. */
-export async function writeProject(project: SavedProject): Promise<void> {
+export async function writeProject(project: SavedProject, signal?: AbortSignal): Promise<void> {
   const validated = validateSavedProject(project)
-  await transaction<void>([PROJECTS, SUMMARIES], 'readwrite', (tx, result) => {
-    tx.objectStore(PROJECTS).put(validated)
-    tx.objectStore(SUMMARIES).put(summarizeProject(validated))
-    result(undefined)
-  })
+  await transaction<void>(
+    [PROJECTS, SUMMARIES],
+    'readwrite',
+    (tx, result) => {
+      tx.objectStore(PROJECTS).put(validated)
+      tx.objectStore(SUMMARIES).put(summarizeProject(validated))
+      result(undefined)
+    },
+    signal,
+  )
 }
 
 export async function deleteProject(id: string): Promise<void> {

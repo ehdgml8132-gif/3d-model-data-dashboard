@@ -377,7 +377,7 @@ export default function ProjectManager({
                   : '저장되지 않은 작업본 · 이 브라우저에는 아직 저장되지 않았습니다.'
                 : available
                   ? 'IFC·업무 데이터·필터·화면 상태를 이름 붙여 보관하세요.'
-                  : 'IFC 모델을 불러오면 프로젝트로 저장할 수 있습니다.'}
+                  : 'IFC 모델을 불러오면 새 프로젝트로 자동 저장됩니다.'}
             </small>
           </div>
         </div>
@@ -649,7 +649,7 @@ export default function ProjectManager({
             <div className="project-empty">
               <FolderOpen size={27} />
               <strong>저장한 프로젝트가 없습니다.</strong>
-              <p>IFC를 불러온 뒤 프로젝트 저장을 눌러 이름을 붙여주세요.</p>
+              <p>IFC를 불러오면 이 목록에 새 프로젝트가 추가됩니다.</p>
             </div>
           ) : null}
           <p className="project-storage-note">

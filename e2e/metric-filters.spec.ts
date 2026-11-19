@@ -276,8 +276,8 @@ test('IFC unknown-volume reasons follow the visible card, survive reopening and 
 
   const projectName = '체적 미확인 검토'
   const projectToolbar = page.getByRole('region', { name: '프로젝트 작업공간', exact: true })
-  await projectToolbar.getByRole('button', { name: '프로젝트 저장', exact: true }).click()
-  const save = page.getByRole('dialog', { name: '프로젝트 저장', exact: true })
+  await projectToolbar.getByRole('button', { name: '다른 이름으로 저장', exact: true }).click()
+  const save = page.getByRole('dialog', { name: '다른 이름으로 저장', exact: true })
   await save.getByRole('textbox', { name: '프로젝트 이름', exact: true }).fill(projectName)
   await save.getByRole('button', { name: '저장', exact: true }).click()
   await expect(save).toHaveCount(0)

@@ -43,16 +43,14 @@ async function expectGroundFloor(page: Page) {
   await dialog.getByRole('button', { name: '완료', exact: true }).click()
 }
 
-async function importIfc(page: Page) {
+async function importIfc(page: Page, name = 'authored-building.ifc') {
   await page.getByLabel('IFC 파일 선택', { exact: true }).setInputFiles({
-    name: 'authored-building.ifc',
+    name,
     mimeType: 'application/octet-stream',
     buffer: await readFile(fixture),
   })
   await expect(members(page).locator('tbody tr')).toHaveCount(5, { timeout: 45_000 })
-  await expect(
-    page.getByText('업로드한 IFC 모델 · authored-building.ifc', { exact: true }),
-  ).toBeVisible()
+  await expect(page.getByText(`업로드한 IFC 모델 · ${name}`, { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '업로드 취소', exact: true })).toHaveCount(0)
   await expect(page.getByRole('group', { name: '건물 층 선택', exact: true })).toHaveCount(0)
 }
@@ -88,8 +86,8 @@ async function showData(page: Page, query: string, kind = 'column') {
   await page.getByLabel('부재 종류', { exact: true }).selectOption(kind)
 }
 
-async function saveNamed(page: Page, name: string, saveAs = false) {
-  const action = saveAs ? '다른 이름으로 저장' : '프로젝트 저장'
+async function saveAs(page: Page, name: string) {
+  const action = '다른 이름으로 저장'
   await toolbar(page).getByRole('button', { name: action, exact: true }).click()
   const dialog = page.getByRole('dialog', { name: action, exact: true })
   await dialog.getByRole('textbox', { name: '프로젝트 이름', exact: true }).fill(name)
@@ -105,14 +103,12 @@ async function projectList(page: Page) {
   return dialog
 }
 
-async function openSaved(page: Page, name: string) {
+async function openSaved(page: Page, name: string, file = 'authored-building.ifc') {
   const dialog = await projectList(page)
   await dialog.getByRole('button', { name: `${name} 열기`, exact: true }).click()
   await expect(dialog).toHaveCount(0, { timeout: 45_000 })
   await expect(page.getByTestId('current-project-name')).toHaveText(name)
-  await expect(
-    page.getByText('업로드한 IFC 모델 · authored-building.ifc', { exact: true }),
-  ).toBeVisible()
+  await expect(page.getByText(`업로드한 IFC 모델 · ${file}`, { exact: true })).toBeVisible()
 }
 
 async function expectColumnBusiness(page: Page) {
@@ -120,6 +116,20 @@ async function expectColumnBusiness(page: Page) {
   await expect(detail(page)).toContainText('Installed')
   await expect(detail(page)).toContainText('125000')
   await expect(page.getByTestId('building-selected-volume')).toContainText('0.59')
+}
+
+async function failNextProjectSave(page: Page) {
+  await page.evaluate(() => {
+    const originalPut = IDBObjectStore.prototype.put
+    IDBObjectStore.prototype.put = function (...args) {
+      // The model record is already queued when the summary write fails.
+      if (this.name === 'summaries') {
+        IDBObjectStore.prototype.put = originalPut
+        throw new DOMException('simulated quota', 'QuotaExceededError')
+      }
+      return originalPut.apply(this, args)
+    }
+  })
 }
 
 async function savedCamera(page: Page, name: string): Promise<ProjectCamera> {
@@ -206,6 +216,62 @@ async function openDownloadedHtml(page: Page, path: string, testInfo: TestInfo) 
   }
 }
 
+test('each IFC upload is saved separately and can be reopened from the unchanged building sample', async ({
+  page,
+}) => {
+  await openBuilding(page)
+  await expect(members(page).locator('tbody tr')).toHaveCount(72)
+  const sampleRows = await members(page).locator('tbody tr').allTextContents()
+
+  await importIfc(page, '동관.ifc')
+  await expect(page.getByTestId('current-project-name')).toHaveText('동관')
+  await importIfc(page, '서관.IFC')
+  await expect(page.getByTestId('current-project-name')).toHaveText('서관')
+
+  await page.getByRole('button', { name: '샘플로 돌아가기', exact: true }).click()
+  await expect(page.getByLabel('건물 모델 3D 뷰어', { exact: true })).toBeVisible()
+  await expect(page.getByTestId('current-project-name')).toHaveText('저장되지 않은 프로젝트')
+  await expect.poll(() => members(page).locator('tbody tr').allTextContents()).toEqual(sampleRows)
+
+  await page.reload()
+  const list = await projectList(page)
+  await expect(list.getByRole('article')).toHaveCount(2)
+  await list.getByRole('button', { name: '동관 열기', exact: true }).click()
+  await expect(list).toHaveCount(0, { timeout: 45_000 })
+  await expect(page.getByTestId('current-project-name')).toHaveText('동관')
+  await expect(page.getByText('업로드한 IFC 모델 · 동관.ifc', { exact: true })).toBeVisible()
+  await expect(members(page).locator('tbody tr')).toHaveCount(5)
+  await openSaved(page, '서관', '서관.IFC')
+  await expect(members(page).locator('tbody tr')).toHaveCount(5)
+})
+
+test('IFC stays open and can be saved manually after an automatic save runs out of space', async ({
+  page,
+}) => {
+  await openBuilding(page)
+  await failNextProjectSave(page)
+  await importIfc(page)
+  const alert = page.getByRole('alert')
+  await expect(alert).toContainText('IFC 모델을 열었지만 자동 저장하지 못했습니다.')
+  await expect(alert).toContainText('브라우저 저장 공간이 부족합니다')
+  await expect(page.getByLabel('IFC 모델 3D 뷰어', { exact: true })).toBeVisible()
+
+  const list = await projectList(page)
+  await expect(list.getByText('저장한 프로젝트가 없습니다.', { exact: true })).toBeVisible()
+  await list.getByRole('button', { name: '프로젝트 열기 창 닫기', exact: true }).click()
+  await toolbar(page).getByRole('button', { name: '프로젝트 저장', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '프로젝트 저장', exact: true })
+  await expect(dialog.getByRole('textbox', { name: '프로젝트 이름', exact: true })).toHaveValue(
+    'authored-building',
+  )
+  await dialog.getByRole('button', { name: '저장', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(page.getByTestId('current-project-name')).toHaveText('authored-building')
+  await expect(alert).toHaveCount(0)
+  await page.reload()
+  await openSaved(page, 'authored-building')
+})
+
 test('named browser projects survive reload and Save As keeps independent workspace copies', async ({
   page,
 }) => {
@@ -229,14 +295,14 @@ test('named browser projects survive reload and Save As keeps independent worksp
   const savedMax = await canvas.getAttribute('data-section-max')
   await showData(page, 'Round concrete')
   await expect(members(page).locator('tbody tr')).toHaveCount(1)
-  await saveNamed(page, '현장 A')
+  await saveAs(page, '현장 A')
   await showData(page, 'Concrete wall', 'wall')
-  await saveNamed(page, '현장 B', true)
+  await saveAs(page, '현장 B')
 
   await page.reload()
   await expect(members(page).locator('tbody tr')).toHaveCount(72)
   const list = await projectList(page)
-  await expect(list.getByRole('article')).toHaveCount(2)
+  await expect(list.getByRole('article')).toHaveCount(3)
   await expect(list.getByRole('article', { name: '현장 A 프로젝트', exact: true })).toContainText(
     'authored-building.ifc',
   )
@@ -261,9 +327,9 @@ test('named browser projects survive reload and Save As keeps independent worksp
   await showData(page, columnName)
   await toolbar(page).getByRole('button', { name: '프로젝트 저장', exact: true }).click()
   await expect(page.getByTestId('current-project-name')).toHaveText('현장 A')
-  // Opening the list waits for the preceding save and must still contain two IDs.
+  // Opening the list waits for the preceding save, which must keep the same ID.
   const updatedList = await projectList(page)
-  await expect(updatedList.getByRole('article')).toHaveCount(2)
+  await expect(updatedList.getByRole('article')).toHaveCount(3)
   await updatedList.getByRole('button', { name: '현장 B 열기', exact: true }).click()
   await expect(updatedList).toHaveCount(0, { timeout: 45_000 })
   await expect(page.getByRole('textbox', { name: '부재 검색', exact: true })).toHaveValue(
@@ -285,11 +351,9 @@ test('HTML project files restore IFC and linked data in a fresh mobile browser a
   await connectBusiness(page)
   await selectColumn(page)
   await showData(page, columnName)
+  await saveAs(page, '이동 현장')
   const downloadPromise = page.waitForEvent('download', { timeout: 60_000 })
   await toolbar(page).getByRole('button', { name: '파일로 내보내기', exact: true }).click()
-  const exportDialog = page.getByRole('dialog', { name: '프로젝트 파일 내보내기', exact: true })
-  await exportDialog.getByRole('textbox', { name: '프로젝트 이름', exact: true }).fill('이동 현장')
-  await exportDialog.getByRole('button', { name: '내보내기', exact: true }).click()
   const download = await downloadPromise
   expect(download.suggestedFilename()).toMatch(/\.html$/)
   const portableFile = await readFile((await download.path())!)
@@ -411,12 +475,10 @@ test('downloaded HTML restores the offline workspace without project management 
   const savedMin = await canvas.getAttribute('data-section-min')
   const savedMax = await canvas.getAttribute('data-section-max')
   await showData(page, columnName)
+  await saveAs(page, projectName)
 
   const downloadPromise = page.waitForEvent('download', { timeout: 60_000 })
   await toolbar(page).getByRole('button', { name: '파일로 내보내기', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: '프로젝트 파일 내보내기', exact: true })
-  await dialog.getByRole('textbox', { name: '프로젝트 이름', exact: true }).fill(projectName)
-  await dialog.getByRole('button', { name: '내보내기', exact: true }).click()
   const download = await downloadPromise
   expect(download.suggestedFilename()).toMatch(/\.html$/)
   const path = testInfo.outputPath('exported-project.html')
@@ -517,17 +579,9 @@ test('a quota error aborts the whole overwrite and leaves the previous browser p
   await openBuilding(page)
   await importIfc(page)
   await showData(page, 'Round concrete')
-  await saveNamed(page, '저장 공간 검증')
+  await saveAs(page, '저장 공간 검증')
   await page.getByRole('textbox', { name: '부재 검색', exact: true }).fill('unsaved revision')
-  await page.evaluate(() => {
-    const originalPut = IDBObjectStore.prototype.put
-    IDBObjectStore.prototype.put = function (...args) {
-      // The model record has already been queued when writing the summary fails.
-      // The transaction must roll both stores back rather than partially save.
-      if (this.name === 'summaries') throw new DOMException('simulated quota', 'QuotaExceededError')
-      return originalPut.apply(this, args)
-    }
-  })
+  await failNextProjectSave(page)
   await toolbar(page).getByRole('button', { name: '프로젝트 저장', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('브라우저 저장 공간이 부족합니다')
   await expect(page.getByRole('textbox', { name: '부재 검색', exact: true })).toHaveValue(
@@ -537,7 +591,7 @@ test('a quota error aborts the whole overwrite and leaves the previous browser p
   const downloadPromise = page.waitForEvent('download', { timeout: 60_000 })
   await toolbar(page).getByRole('button', { name: '파일로 내보내기', exact: true }).click()
   expect((await downloadPromise).suggestedFilename()).toMatch(/\.html$/)
-  // Reload also removes the injected failure. The saved IFC must still parse.
+  // The failed overwrite must leave the previous IFC and workspace usable.
   await page.reload()
   await openSaved(page, '저장 공간 검증')
   await expect(page.getByRole('textbox', { name: '부재 검색', exact: true })).toHaveValue(
@@ -595,7 +649,7 @@ test('Save As retains an adjusted camera and cancelling a project parse preserve
   await importIfc(page)
   await connectBusiness(page)
   await selectColumn(page)
-  await saveNamed(page, '시점 기준')
+  await saveAs(page, '시점 기준')
   const original = await savedCamera(page, '시점 기준')
   const canvas = page.getByLabel('IFC 모델 3D 뷰어', { exact: true })
   const bounds = (await canvas.boundingBox())!
@@ -606,7 +660,7 @@ test('Save As retains an adjusted camera and cancelling a project parse preserve
   })
   await page.mouse.up({ button: 'right' })
   await page.mouse.wheel(0, -300)
-  await saveNamed(page, '시점 변경', true)
+  await saveAs(page, '시점 변경')
   const moved = await savedCamera(page, '시점 변경')
   // Opening the name modal must not refit the viewer back to its initial camera.
   expect(moved.target.some((value, index) => Math.abs(value - original.target[index]) > 0.01)).toBe(
@@ -617,7 +671,7 @@ test('Save As retains an adjusted camera and cancelling a project parse preserve
   await openSaved(page, '시점 기준')
   await openSaved(page, '시점 변경')
   await expectColumnBusiness(page)
-  await saveNamed(page, '복원 시점', true)
+  await saveAs(page, '복원 시점')
   const restored = await savedCamera(page, '복원 시점')
   restored.position.forEach((value, index) => expect(value).toBeCloseTo(moved.position[index], 5))
   restored.target.forEach((value, index) => expect(value).toBeCloseTo(moved.target[index], 5))
