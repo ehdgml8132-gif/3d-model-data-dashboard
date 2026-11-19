@@ -90,7 +90,7 @@ async function selectBox(page: Page, base: Bounds, touch = false) {
 async function enableSection(page: Page, touch = false) {
   await page.getByRole('checkbox', { name: '단면상자', exact: true }).check()
   await expect(page.locator('.section-face-handle')).toHaveCount(0)
-  await expect(page.locator('input[type="range"]')).toHaveCount(0)
+  await expect(page.getByRole('slider', { name: /^(?!투명도$)/ })).toHaveCount(0)
   await expect(page.locator('canvas')).toHaveAttribute('data-section-selected', 'false')
   const base = await boundsOf(page)
   await selectBox(page, base, touch)

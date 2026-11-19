@@ -43,7 +43,7 @@ async function enableSection(page: Page) {
   await page.getByRole('checkbox', { name: '단면상자', exact: true }).check()
   await expect(page.locator('canvas')).toHaveAttribute('data-section-selected', 'false')
   await expect(page.locator('.section-face-handle')).toHaveCount(0)
-  await expect(page.locator('input[type="range"]')).toHaveCount(0)
+  await expect(page.getByRole('slider', { name: /^(?!투명도$)/ })).toHaveCount(0)
   await expect(page.getByRole('region', { name: '단면상자 범위', exact: true })).toHaveCount(0)
   return boundsOf(page.locator('canvas'))
 }

@@ -170,6 +170,7 @@ export default function BuildingDashboard() {
   }, [setSelectedId])
   const [resetKey, setResetKey] = useState(0)
   const [ifcModel, setIfcModel] = useSessionState<IfcModel | null>('building:model', null)
+  const [ifcTransparency, setIfcTransparency] = useState(0)
   const [sourceIfcFile, setSourceIfcFile] = useSessionState<File | null>('building:ifc-file', null)
   const [currentProject, setCurrentProject] = useSessionState<ProjectSummary | null>(
     'building:project',
@@ -334,6 +335,7 @@ export default function BuildingDashboard() {
 
       cameraGeneration.current += 1
       setIfcModel(model)
+      setIfcTransparency(0)
       setSourceIfcFile(file)
       setCurrentProject(saved)
       setCurrentProjectStored(saved !== null)
@@ -380,6 +382,7 @@ export default function BuildingDashboard() {
     cancelImport()
     cameraGeneration.current += 1
     setIfcModel(null)
+    setIfcTransparency(0)
     setSourceIfcFile(null)
     setCurrentProject(null)
     setCurrentProjectStored(false)
@@ -489,6 +492,7 @@ export default function BuildingDashboard() {
       cameraGeneration.current += 1
       restoredTablePage.current = snapshot.workspace.tablePage
       setIfcModel(model)
+      setIfcTransparency(0)
       setSourceIfcFile(snapshot.ifcFile)
       setBusiness(restoredBusiness)
       setBusinessOpen(false)
@@ -962,6 +966,22 @@ export default function BuildingDashboard() {
                             : `${metricFilters.floors.length}개 층`}
                       </span>
                     </div>
+                    {ifcModel && (
+                      <label className="ifc-transparency-control">
+                        <span>투명도</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={5}
+                          value={ifcTransparency}
+                          aria-label="투명도"
+                          aria-valuetext={`${ifcTransparency}%`}
+                          onChange={(event) => setIfcTransparency(event.currentTarget.valueAsNumber)}
+                        />
+                        <span aria-hidden="true">{ifcTransparency}%</span>
+                      </label>
+                    )}
                     {visible.length ? (
                       <BuildingSceneBoundary key={modelVersion}>
                         <Suspense
@@ -975,6 +995,7 @@ export default function BuildingDashboard() {
                           {ifcModel ? (
                             <IfcScene
                               model={ifcModel}
+                              transparency={ifcTransparency}
                               visibleIds={visibleIfcIds}
                               selectedId={selected?.id ?? ''}
                               onSelect={selectInViewer}

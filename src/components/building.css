@@ -669,6 +669,37 @@
 .building-scene-wrap .scene-hint {
   bottom: 15px;
 }
+.ifc-transparency-control {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 31;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 4ch;
+  align-items: center;
+  gap: 6px;
+  width: min(178px, 48%);
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid #dce7d4;
+  border-radius: 6px;
+  background: #f9fcf7;
+  color: #365943;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.ifc-transparency-control input {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  margin: 0;
+  accent-color: #54825e;
+  cursor: pointer;
+}
+.ifc-transparency-control > span:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 .building-legend {
   display: flex;
   align-items: center;

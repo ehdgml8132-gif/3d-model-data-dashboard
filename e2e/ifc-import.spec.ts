@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import ExcelJS from 'exceljs'
 
@@ -86,6 +86,67 @@ async function connectCsv(page: Page) {
   await expect(dialog).toHaveCount(0)
 }
 
+async function expectTransparencyRendering(page: Page, canvas: Locator, slider: Locator) {
+  async function capture(value: string) {
+    await slider.fill(value)
+    await expect(slider).toHaveValue(value)
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    )
+    return (await canvas.screenshot()).toString('base64')
+  }
+
+  const opaque = await capture('0')
+  const transparent = await capture('75')
+  const reset = await capture('0')
+  const difference = await page.evaluate(
+    async (captures) => {
+      const images = await Promise.all(
+        captures.map(async (capture) => {
+          const image = new Image()
+          image.src = `data:image/png;base64,${capture}`
+          await image.decode()
+          return image
+        }),
+      )
+      const scratch = document.createElement('canvas')
+      scratch.width = images[0].width
+      scratch.height = images[0].height
+      const context = scratch.getContext('2d')!
+      // Compare the middle of the viewer away from its overlaid labels and controls.
+      const x = Math.floor(scratch.width / 5)
+      const y = Math.floor(scratch.height / 5)
+      const width = scratch.width - 2 * x
+      const height = scratch.height - 2 * y
+      const pixels = images.map((image) => {
+        context.drawImage(image, 0, 0)
+        return context.getImageData(x, y, width, height).data
+      })
+      function changedFraction(comparison: Uint8ClampedArray) {
+        let changed = 0
+        for (let index = 0; index < comparison.length; index += 4) {
+          const difference =
+            Math.abs(pixels[0][index] - comparison[index]) +
+            Math.abs(pixels[0][index + 1] - comparison[index + 1]) +
+            Math.abs(pixels[0][index + 2] - comparison[index + 2])
+          if (difference > 24) changed++
+        }
+        return changed / (width * height)
+      }
+      return { transparent: changedFraction(pixels[1]), reset: changedFraction(pixels[2]) }
+    },
+    [opaque, transparent, reset],
+  )
+
+  expect(difference.transparent, 'fading changes the rendered IFC pixels').toBeGreaterThan(0.01)
+  expect(difference.reset, 'returning to 0% restores the rendering').toBeLessThan(
+    difference.transparent / 10,
+  )
+}
+
 test('official IFC geometry uses Revit-style Pset volumes for member cards, tables and totals', async ({
   page,
 }) => {
@@ -101,6 +162,8 @@ test('official IFC geometry uses Revit-style Pset volumes for member cards, tabl
       external.push(request.url())
   })
   await openBuilding(page)
+  const transparency = page.getByRole('slider', { name: '투명도', exact: true })
+  await expect(transparency).toHaveCount(0)
   const source = await readFile(fixture, 'utf8')
   // Deliberately disagree with the column's Pset value: Qto must not supply the volume.
   const conflictingQto = source.replace(
@@ -111,12 +174,17 @@ test('official IFC geometry uses Revit-style Pset volumes for member cards, tabl
   await importIfc(page, 'pset-volume.ifc', Buffer.from(conflictingQto))
   const canvas = page.getByLabel('IFC 모델 3D 뷰어', { exact: true })
   await expect(canvas).toBeVisible()
+  await expect(transparency).toHaveValue('0')
+  await expect(transparency).toHaveAttribute('min', '0')
+  await expect(transparency).toHaveAttribute('max', '100')
+  await expect(transparency).toHaveAttribute('step', '5')
   expect(
     await canvas.evaluate((node) => {
       const gl = (node as HTMLCanvasElement).getContext('webgl2')
       return !!gl && !gl.isContextLost()
     }),
   ).toBe(true)
+  await expectTransparencyRendering(page, canvas, transparency)
   await selectColumn(page)
   await expect(detail(page)).toContainText('Concrete C30/37')
   await expect(detail(page)).toContainText('Ground floor')
@@ -135,14 +203,21 @@ test('official IFC geometry uses Revit-style Pset volumes for member cards, tabl
       .filter({ has: page.getByText('총 체적', { exact: true }) })
       .locator(':scope > strong'),
   ).toHaveText('10.83 m³')
+  await transparency.press('ArrowRight')
+  await expect(transparency).toHaveValue('5')
+  await transparency.fill('50')
+  await expect(transparency).toHaveAttribute('aria-valuetext', '50%')
+  await expect(page.getByText('50%', { exact: true })).toBeVisible()
   // Unmount and remount the viewer twice under the app's React StrictMode.
-  // The subsequent real pointer pick proves disposed GPU state is rebuilt.
+  // The subsequent real pointer pick also verifies selection through transparency.
   const menu = page.getByRole('navigation', { name: '건물 메뉴', exact: true })
   for (let index = 0; index < 2; index++) {
     await menu.getByRole('button', { name: '부재 데이터', exact: true }).click()
     await expect(page.locator('canvas')).toHaveCount(0)
+    await expect(transparency).toHaveCount(0)
     await menu.getByRole('button', { name: '공간 데이터', exact: true }).click()
     await expect(canvas).toBeVisible()
+    await expect(transparency).toHaveValue('50')
     await expect(detail(page)).toContainText(columnGuid)
   }
   // Exercise the imported triangle geometry's actual pointer path. Several
@@ -168,6 +243,11 @@ test('official IFC geometry uses Revit-style Pset volumes for member cards, tabl
     'First floor concrete slab',
     'Steel beam 1',
   ]).toContain(clickedName)
+  const sectionBox = page.getByRole('checkbox', { name: '단면상자', exact: true })
+  await sectionBox.check()
+  await expect(canvas).toHaveAttribute('data-section-box', 'true')
+  await expect(transparency).toHaveValue('50')
+  await sectionBox.uncheck()
   const floors = await openFloorFilter(page)
   await expect(floors.getByRole('checkbox', { name: 'Ground floor', exact: true })).toBeVisible()
   await expect(floors.getByRole('checkbox', { name: 'First floor', exact: true })).toBeVisible()
@@ -178,9 +258,11 @@ test('official IFC geometry uses Revit-style Pset volumes for member cards, tabl
   await page.getByRole('button', { name: '샘플로 돌아가기', exact: true }).click()
   await expect(members(page).locator('tbody tr')).toHaveCount(72)
   await expect(page.getByRole('group', { name: '건물 층 선택', exact: true })).toBeVisible()
+  await expect(transparency).toHaveCount(0)
   await importIfc(page, 'reopened.ifc')
   await selectColumn(page)
   await expect(canvas).toBeVisible()
+  await expect(transparency).toHaveValue('0')
   await expect(page.getByTestId('building-selected-volume')).toContainText('0.59')
   expect(wasm.length).toBeGreaterThan(0)
   expect(uploads).toEqual([])
@@ -281,6 +363,8 @@ test('invalid IFC preserves the active model and linked rows, while a successful
 }) => {
   await openBuilding(page)
   await importIfc(page)
+  const transparency = page.getByRole('slider', { name: '투명도', exact: true })
+  await transparency.fill('75')
   await selectColumn(page)
   await connectCsv(page)
   await page.getByLabel('IFC 파일 선택', { exact: true }).setInputFiles({
@@ -291,11 +375,13 @@ test('invalid IFC preserves the active model and linked rows, while a successful
   await expect(page.getByRole('alert')).toBeVisible()
   await expect(members(page).locator('tbody tr')).toHaveCount(5)
   await expect(detail(page)).toContainText('Installed')
+  await expect(transparency).toHaveValue('75')
   const replacement = (await readFile(fixture, 'utf8')).replaceAll(
     columnName,
     'Replacement round column',
   )
   await importIfc(page, 'replacement.ifc', Buffer.from(replacement))
+  await expect(transparency).toHaveValue('0')
   await expect(detail(page)).not.toContainText('Installed')
   await expect(
     page.getByRole('button', { name: '업무 데이터 연결 해제', exact: true }),

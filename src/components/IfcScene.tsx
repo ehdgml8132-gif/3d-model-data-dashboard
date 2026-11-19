@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MutableRefObject } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import { Canvas, type ThreeEvent } from '@react-three/fiber'
 import { Edges, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
@@ -17,6 +17,7 @@ import type { ProjectCamera } from '../projects/types'
 
 type Props = {
   model: IfcModel
+  transparency: number
   visibleIds: string[]
   selectedId: string
   onSelect: (id: string) => void
@@ -99,12 +100,14 @@ function IfcMesh({
   onSelect,
   clipBounds,
   planes,
+  opacityMultiplier,
 }: {
   mesh: PlacedMesh
   selected: boolean
   onSelect: Props['onSelect']
   clipBounds: THREE.Box3 | null
   planes: THREE.Plane[]
+  opacityMultiplier: number
 }) {
   const [hovered, setHovered] = useState(false)
   const color = useMemo(() => {
@@ -112,7 +115,14 @@ function IfcMesh({
     const original = new THREE.Color(mesh.color[0], mesh.color[1], mesh.color[2])
     return hovered ? original.lerp(new THREE.Color('#e0b46e'), 0.4) : original
   }, [mesh.color, selected, hovered])
-  const opacity = selected ? 0.85 : THREE.MathUtils.clamp(mesh.color[3], 0, 1)
+  const baseOpacity = selected ? 0.85 : THREE.MathUtils.clamp(mesh.color[3], 0, 1)
+  const opacity = baseOpacity * opacityMultiplier
+  const transparent = opacity < 1
+  const material = useRef<THREE.MeshStandardMaterial>(null)
+  useLayoutEffect(() => {
+    // Three uses different shader variants for opaque and translucent surfaces.
+    if (material.current) material.current.needsUpdate = true
+  }, [transparent])
   const raycast = useMemo(() => sectionRaycast(clipBounds), [clipBounds])
   useEffect(() => setHovered(false), [clipBounds])
 
@@ -141,10 +151,12 @@ function IfcMesh({
       onPointerOut={() => setHovered(false)}
     >
       <meshStandardMaterial
+        ref={material}
         color={color}
         opacity={opacity}
-        transparent={opacity < 1}
-        depthWrite={opacity >= 1}
+        visible={opacity > 0}
+        transparent={transparent}
+        depthWrite={!transparent}
         side={THREE.DoubleSide}
         roughness={0.76}
         metalness={0.02}
@@ -172,6 +184,7 @@ function IfcMesh({
 
 function ModelContents({
   model,
+  transparency,
   visibleIds,
   selectedId,
   onSelect,
@@ -185,6 +198,7 @@ function ModelContents({
   onCameraChange,
   cameraCapture,
 }: Props) {
+  const opacityMultiplier = 1 - transparency / 100
   const prepared = useMemo(() => prepareModel(model), [model])
   const visibilityKey = visibleIds.join('\u0000')
   const visible = useMemo(() => {
@@ -239,6 +253,7 @@ function ModelContents({
           onSelect={onSelect}
           clipBounds={clipBounds}
           planes={planes}
+          opacityMultiplier={opacityMultiplier}
         />
       ))}
       <FrameBoxCamera bounds={sectionBase ?? visibleBounds} resetKey={resetKey} />
