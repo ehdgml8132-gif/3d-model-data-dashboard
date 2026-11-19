@@ -22,7 +22,7 @@ function detail(page: Page) {
 }
 
 async function openBuilding(page: Page) {
-  await page.goto('/?sample=building')
+  await page.goto('/')
   await expect(page.getByRole('heading', { name: '건물 모델 대시보드', exact: true })).toBeVisible()
 }
 
@@ -198,19 +198,19 @@ test('GlobalId CSV mapping appears on the selected real IFC member in both views
   await expect(detail(page)).toContainText('연결된 업무 데이터')
   await expect(detail(page)).toContainText('Installed')
   await expect(detail(page)).toContainText('125000')
-  await page
+  const memberData = page
     .getByRole('navigation', { name: '건물 메뉴', exact: true })
     .getByRole('button', { name: '부재 데이터', exact: true })
-    .click()
+  await memberData.click()
   await expect(page.getByRole('heading', { name: '부재 데이터', exact: true })).toBeVisible()
   await expect(page.locator('canvas')).toHaveCount(0)
   await page.getByRole('textbox', { name: '부재 검색', exact: true }).fill(columnName)
   await expect(members(page).locator('tbody tr')).toHaveCount(1)
   await selectColumn(page)
   await expect(detail(page)).toContainText('Installed')
-  await page.getByRole('button', { name: '카페 샘플', exact: true }).click()
-  await expect(page.getByRole('heading', { name: '모노 카페 대시보드', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '건물 샘플', exact: true }).click()
+  await memberData.click()
+  await page.getByRole('button', { name: '공간·부재 정보', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '건물 모델 대시보드', exact: true })).toBeVisible()
   await expect(members(page).locator('tbody tr')).toHaveCount(5)
   await expect(detail(page)).toContainText('Installed')
 })

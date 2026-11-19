@@ -12,7 +12,6 @@ for (const name of [
   'assets',
   'ifc',
   'favicon.svg',
-  'sample-products.csv',
   'monospace-building-preview.html',
 ]) {
   await access(join(output, name))
@@ -26,7 +25,7 @@ from zipfile import ZipFile, ZIP_DEFLATED
 
 root = Path(sys.argv[1]).resolve()
 destination = Path(sys.argv[2]).resolve()
-files = [root / name for name in ('index.html', 'favicon.svg', 'sample-products.csv', 'THIRD_PARTY.md', 'monospace-building-preview.html') if (root / name).exists()]
+files = [root / name for name in ('index.html', 'favicon.svg', 'THIRD_PARTY.md', 'monospace-building-preview.html') if (root / name).exists()]
 for directory in ('assets', 'ifc', 'examples'):
     if (root / directory).exists():
         files.extend(sorted((root / directory).rglob('*')))

@@ -14,7 +14,7 @@ const graphData = (page: Page) =>
   page.getByRole('table', { name: '층별 그래프 데이터', exact: true })
 
 async function openBuilding(page: Page) {
-  await page.goto('/?sample=building')
+  await page.goto('/')
   await expect(page.getByRole('heading', { name: '건물 모델 대시보드', exact: true })).toBeVisible()
   await expect(page.locator('canvas')).toBeVisible()
 }

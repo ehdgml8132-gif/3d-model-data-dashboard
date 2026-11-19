@@ -27,7 +27,7 @@ function currentStandaloneTemplate(): string | null {
   const favicon = icon?.href.startsWith('data:image/') ? icon.outerHTML : ''
   const license = document.getElementById('web-ifc-license') ? inlineScript('web-ifc-license') : ''
   return `<!doctype html>
-<html lang="ko" data-sample="building" data-monospace-standalone="1">
+<html lang="ko" data-monospace-standalone="1">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -81,7 +81,7 @@ export async function exportProjectHtml(project: SavedProject): Promise<Blob> {
   return encodeProjectHtml(project, await templateRequest)
 }
 
-/** The same pending decode is reused through StrictMode and café navigation. */
+/** Reuse the pending decode when StrictMode reruns the startup effect. */
 export function embeddedProjectToOpen(): Promise<SavedProject> | null {
   if (embeddedHandled) return null
   const script = document.getElementById(EMBEDDED_PROJECT_ID)

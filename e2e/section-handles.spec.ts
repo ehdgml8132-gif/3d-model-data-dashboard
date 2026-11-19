@@ -14,7 +14,7 @@ const details = (page: Page) => page.getByRole('article', { name: '선택한 부
 const members = (page: Page) => page.getByRole('article', { name: '부재 목록', exact: true })
 
 async function openBuilding(page: Page) {
-  await page.goto('http://127.0.0.1:5173/?sample=building')
+  await page.goto('http://127.0.0.1:5173/')
   await expect(page.getByLabel('건물 모델 3D 뷰어', { exact: true })).toBeVisible()
 }
 

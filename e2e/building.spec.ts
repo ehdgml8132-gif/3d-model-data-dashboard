@@ -3,7 +3,6 @@ import { OrthographicCamera, Vector3 } from 'three'
 
 async function openBuilding(page: Page) {
   await page.goto('/')
-  await page.getByRole('button', { name: '건물 샘플', exact: true }).click()
   await expect(page.getByRole('heading', { name: '건물 모델 대시보드', exact: true })).toBeVisible()
 }
 
@@ -44,10 +43,18 @@ async function openMemberData(page: Page) {
   ).toHaveAttribute('aria-pressed', 'false')
 }
 
-test('building sample starts with a live WebGL model and no selected member', async ({ page }) => {
+test('the root opens the building dashboard with both data views and a live WebGL model', async ({
+  page,
+}) => {
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   await openBuilding(page)
+  await expect(page).toHaveURL(/\/$/)
+  const home = page.getByRole('button', { name: '공간·부재 정보', exact: true })
+  await expect(home).toBeVisible()
+  await expect(home).toHaveText('공간·부재 정보')
+  await expect(page.getByRole('button', { name: /카페/ })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: /카페/ })).toHaveCount(0)
   await expect(
     buildingMenu(page).getByRole('button', { name: '공간 데이터', exact: true }),
   ).toHaveAttribute('aria-pressed', 'true')
@@ -208,6 +215,7 @@ test('a real 3D building member click selects its matching data', async ({ page 
     .getByRole('button', { name: /^1F-C01.*선택$/ })
     .click()
   await expect(buildingDetail(page)).toContainText('1F-C01')
+  await canvas.scrollIntoViewIfNeeded()
   const before = (await canvas.boundingBox())!
   await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2)
   await page.mouse.down()
@@ -217,6 +225,7 @@ test('a real 3D building member click selects its matching data', async ({ page 
   await page.mouse.up()
   await expect(buildingDetail(page)).toContainText('1F-C01')
   await page.getByRole('button', { name: '3D 건물 시점 초기화', exact: true }).click()
+  await expect(canvas).toBeVisible()
   const bounds = (await canvas.boundingBox())!
   // Project the front right first-floor column through the actual default camera.
   const camera = new OrthographicCamera(
@@ -237,33 +246,6 @@ test('a real 3D building member click selects its matching data', async ({ page 
     position: { x: ((point.x + 1) / 2) * bounds.width, y: ((1 - point.y) / 2) * bounds.height },
   })
   await expect(buildingDetail(page)).toContainText('1F-C09')
-})
-
-test('switching building and café samples preserves uploaded café data', async ({ page }) => {
-  await page.goto('/')
-  await page.getByRole('button', { name: '데이터 업로드', exact: true }).click()
-  const csv = [
-    'product_id,product_name,category,unit_price,stock,date,quantity',
-    'P001,내 매장 커피,커피,1000,30,2026-11-04,2',
-    'P002,내 매장 라테,커피,2000,25,2026-11-04,3',
-    'P003,내 매장 빵,베이커리,3000,10,2026-11-04,4',
-    'P004,내 매장 케이크,디저트,4000,5,2026-11-04,5',
-  ].join('\n')
-  await page
-    .getByLabel('CSV 파일 선택', { exact: true })
-    .setInputFiles({ name: 'keep-cafe.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) })
-  await expect(page.getByRole('dialog')).toHaveCount(0)
-  await expect(page.getByTestId('selected-revenue')).toHaveText('2,000원')
-  await page.getByRole('button', { name: '건물 샘플', exact: true }).click()
-  await expect(page.getByRole('heading', { name: '건물 모델 대시보드', exact: true })).toBeVisible()
-  await expectNoBuildingSelection(page)
-  await page.getByRole('button', { name: '카페 샘플', exact: true }).click()
-  await expect(page.getByRole('heading', { name: '모노 카페 대시보드', exact: true })).toBeVisible()
-  await expect(
-    page.locator('.product-chips').getByRole('button', { name: '내 매장 커피', exact: true }),
-  ).toBeVisible()
-  await expect(page.getByTestId('selected-revenue')).toHaveText('2,000원')
-  await expect(page.getByText('keep-cafe.csv', { exact: true })).toBeVisible()
 })
 
 test('building sample remains usable on mobile without horizontal page overflow', async ({
@@ -292,11 +274,6 @@ test('building sample remains usable on mobile without horizontal page overflow'
   await expect(page.getByRole('heading', { name: '건물 모델 대시보드', exact: true })).toBeVisible()
   await expect(buildingDetail(page)).toContainText('3F-C09')
   await expect(page.locator('canvas')).toBeVisible()
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true,
-  )
-  await page.getByRole('button', { name: '카페 샘플', exact: true }).click()
-  await expect(page.getByRole('heading', { name: '모노 카페 대시보드', exact: true })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   )

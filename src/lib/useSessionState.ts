@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 
-// Keep the current BIM workspace in this page's memory when visiting the café.
-// File contents are never serialized into browser storage or sent to a server.
+// Keep the active BIM workspace in memory for this page. Saved projects are
+// persisted separately by the project manager.
 const sessionValues = new Map<string, unknown>()
 
 export function useSessionState<T>(

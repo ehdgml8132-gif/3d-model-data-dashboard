@@ -10,12 +10,10 @@ import {
   type ReactNode,
 } from 'react'
 import {
-  ArrowLeft,
   Box,
   Building2,
   Check,
   ChevronRight,
-  Coffee,
   Cuboid,
   Database,
   Link2,
@@ -150,7 +148,7 @@ class BuildingSceneBoundary extends Component<{ children: ReactNode }, { failed:
   }
 }
 
-export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () => void }) {
+export default function BuildingDashboard() {
   const exportedProject = document.documentElement.dataset.monospaceProject === '1'
   const [metricFilters, setMetricFilters] = useSessionState<BuildingMetricFilters>(
     'building:metric-filters',
@@ -564,7 +562,7 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
         <a
           className="brand"
           href="#building"
-          aria-label="건물 샘플 홈"
+          aria-label="공간·부재 정보 홈"
           onClick={(e) => {
             e.preventDefault()
             showHome()
@@ -588,20 +586,15 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
           </div>
           <span className="workspace-dot" />
         </div>
-        <span className="nav-caption">SAMPLE SPACES</span>
-        <nav aria-label="샘플 선택" className="building-sample-nav">
-          <button className="nav-item" onClick={onBackToCafe} aria-label="카페 샘플">
-            <Coffee size={19} />
-            카페 샘플
-          </button>
+        <nav aria-label="대시보드" className="building-home-nav">
           <button
             className="nav-item active"
-            aria-pressed="true"
-            aria-label="건물 샘플"
+            aria-label="공간·부재 정보"
+            title="공간·부재 정보"
             onClick={showHome}
           >
             <Building2 size={19} />
-            건물 샘플
+            공간·부재 정보
             <span className="nav-active-dot" />
           </button>
         </nav>
@@ -689,14 +682,6 @@ export default function BuildingDashboard({ onBackToCafe }: { onBackToCafe: () =
               <button className="button primary" onClick={() => ifcInput.current?.click()}>
                 <Upload size={15} />
                 IFC 모델 업로드
-              </button>
-              <button
-                className="button secondary building-back"
-                aria-label="카페 샘플로 돌아가기"
-                onClick={onBackToCafe}
-              >
-                <ArrowLeft size={15} />
-                카페 샘플로 돌아가기
               </button>
             </div>
           </section>

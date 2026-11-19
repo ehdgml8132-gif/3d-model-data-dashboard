@@ -11,12 +11,8 @@ const { values } = parseArgs({
   options: { 'template-only': { type: 'boolean', default: false }, 'out-dir': { type: 'string' } },
 })
 const outputDirectory = values['out-dir'] ? resolve(root, values['out-dir']) : join(root, 'dist')
-const csv = await readFile(join(root, 'public/sample-products.csv'))
 const favicon = await readFile(join(root, 'public/favicon.svg'))
-const csvUrl = `data:text/csv;charset=utf-8;base64,${csv.toString('base64')}`
 const faviconUrl = `data:image/svg+xml;base64,${favicon.toString('base64')}`
-const sampleUrlExpression = '`${import.meta.env.BASE_URL}sample-products.csv`'
-let sampleUrlInlined = false
 let workerInlined = false
 let wasmInlined = false
 const require = createRequire(import.meta.url)
@@ -24,53 +20,28 @@ const engineRoot = dirname(require.resolve('web-ifc'))
 const wasm = await readFile(join(engineRoot, 'web-ifc.wasm'))
 const engineLicense = await readFile(join(engineRoot, 'LICENSE.md'), 'utf8')
 const wasmUrl = `data:application/wasm;base64,${wasm.toString('base64')}`
-const embeddedExamples = new Map()
-for (const name of ['authored-building.ifc', 'authored-building-data.csv']) {
-  const bytes = await readFile(join(root, 'public/examples', name))
-  embeddedExamples.set(
-    `examples/${name}`,
-    `data:${name.endsWith('.csv') ? 'text/csv;charset=utf-8' : 'application/octet-stream'};base64,${bytes.toString('base64')}`,
-  )
-}
-
 const result = await build({
   root,
   configFile: join(root, 'vite.config.ts'),
   base: './',
   plugins: [
     {
-      name: 'standalone-sample-download',
+      name: 'standalone-ifc-worker',
       enforce: 'pre',
       transform(source, id) {
-        const file = id.split('?')[0]
-        let code = source.replace(
-          /`\$\{import\.meta\.env\.BASE_URL\}(examples\/[^`]+)`/g,
-          (expression, name) => {
-            const embedded = embeddedExamples.get(name)
-            return embedded ? JSON.stringify(embedded) : expression
-          },
-        )
-        if (file === join(root, 'src/ifc/client.ts')) {
-          const constructor =
-            /new Worker\(\s*new URL\('\.\/ifc\.worker\.ts',\s*import\.meta\.url\),\s*\{\s*type:\s*'module'\s*\}\s*\)/
-          if (!constructor.test(code))
-            throw new Error('Expected the IFC worker constructor for the standalone build.')
-          workerInlined = true
-          code = code
-            .replace(constructor, 'new StandaloneIfcWorker()')
-            .replace('new URL(`${import.meta.env.BASE_URL}ifc/`, document.baseURI).href', "''")
-          return {
-            code: `import StandaloneIfcWorker from './ifc.worker.ts?worker&inline'\n${code}`,
-            map: null,
-          }
+        if (id.split('?')[0] !== join(root, 'src/ifc/client.ts')) return
+        const constructor =
+          /new Worker\(\s*new URL\('\.\/ifc\.worker\.ts',\s*import\.meta\.url\),\s*\{\s*type:\s*'module'\s*\}\s*\)/
+        if (!constructor.test(source))
+          throw new Error('Expected the IFC worker constructor for the standalone build.')
+        workerInlined = true
+        const code = source
+          .replace(constructor, 'new StandaloneIfcWorker()')
+          .replace('new URL(`${import.meta.env.BASE_URL}ifc/`, document.baseURI).href', "''")
+        return {
+          code: `import StandaloneIfcWorker from './ifc.worker.ts?worker&inline'\n${code}`,
+          map: null,
         }
-        if (file !== join(root, 'src/App.tsx'))
-          return code !== source ? { code, map: null } : undefined
-        if (code.split(sampleUrlExpression).length !== 2) {
-          throw new Error('Expected one base-aware sample CSV URL expression in App.tsx.')
-        }
-        sampleUrlInlined = true
-        return { code: code.replace(sampleUrlExpression, JSON.stringify(csvUrl)), map: null }
       },
     },
   ],
@@ -105,7 +76,6 @@ const result = await build({
   },
 })
 
-if (!sampleUrlInlined) throw new Error('The standalone sample CSV URL was not inlined.')
 if (!workerInlined || !wasmInlined)
   throw new Error('The standalone IFC worker and engine must be embedded.')
 
@@ -140,40 +110,29 @@ html = html.replace(
 
 // Complete every document transform before embedding code. Runtime strings can
 // themselves contain </head>, </body>, <html> and <title> markup for re-export.
-const buildingDocument = html
-  .replace(/<html([^>]*)>/i, '<html$1 data-sample="building">')
-  .replace(/<title>[^<]*<\/title>/, '<title>모노 스페이스 · 건물 모델 대시보드</title>')
-const inlineApp = (document) =>
-  document.replace(
-    /<script\b[^>]*\bsrc="[^\"]+"[^>]*><\/script>/,
-    () => `<script id="monospace-app" type="module">${javascript}</script>`,
-  )
-html = inlineApp(html)
-const buildingHtml = inlineApp(buildingDocument)
+html = html.replace(
+  /<script\b[^>]*\bsrc="[^"]+"[^>]*><\/script>/,
+  () => `<script id="monospace-app" type="module">${javascript}</script>`,
+)
 
 // Runtime HTML strings must stay inside the app script. Check the final script
 // body and document markers so future transform-order regressions fail builds.
-for (const document of [html, buildingHtml]) {
-  let application
-  const scaffold = document.replace(
-    /<script\b([^>]*)>([\s\S]*?)<\/script>/gi,
-    (_script, attributes, code) => {
-      if (/\bid="monospace-app"/.test(attributes)) application = code
-      return `<script${attributes}></script>`
-    },
-  )
-  if (
-    application !== javascript ||
-    !scaffold.includes('<style id="monospace-styles">') ||
-    !scaffold.includes('id="web-ifc-license"')
-  )
-    throw new Error('The standalone app script or document assets were corrupted during embedding.')
-}
-if (html.includes('/sample-products.csv') || /(?:src|href)="(?:\.\/)?assets\//.test(html)) {
+let application
+const scaffold = html.replace(
+  /<script\b([^>]*)>([\s\S]*?)<\/script>/gi,
+  (_script, attributes, code) => {
+    if (/\bid="monospace-app"/.test(attributes)) application = code
+    return `<script${attributes}></script>`
+  },
+)
+if (
+  application !== javascript ||
+  !scaffold.includes('<style id="monospace-styles">') ||
+  !scaffold.includes('id="web-ifc-license"')
+)
+  throw new Error('The standalone app script or document assets were corrupted during embedding.')
+if (/(?:src|href)="(?:\.\/)?assets\//.test(scaffold))
   throw new Error('A local asset reference remains in the standalone preview.')
-}
-if (!html.includes(csvUrl))
-  throw new Error('The sample CSV is missing from the standalone preview.')
 
 await mkdir(outputDirectory, { recursive: true })
 if (!values['template-only']) {
@@ -184,8 +143,6 @@ if (!values['template-only']) {
   )
 }
 
-// The same app can start with the building example, while preserving the café
-// as the default in the original artifact. Both files include the sample switch.
 const buildingDestination = join(outputDirectory, 'monospace-building-preview.html')
-await writeFile(buildingDestination, buildingHtml)
+await writeFile(buildingDestination, html)
 console.log(`Building preview: ${buildingDestination}`)

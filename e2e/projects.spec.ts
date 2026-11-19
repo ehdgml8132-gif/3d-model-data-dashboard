@@ -17,7 +17,7 @@ const menu = (page: Page) => page.getByRole('navigation', { name: '건물 메뉴
 const toolbar = (page: Page) => page.getByRole('region', { name: '프로젝트 작업공간', exact: true })
 
 async function openBuilding(page: Page) {
-  await page.goto('/?sample=building')
+  await page.goto('/')
   await expect(page.getByRole('heading', { name: '건물 모델 대시보드', exact: true })).toBeVisible()
 }
 
@@ -550,12 +550,10 @@ test('downloaded HTML restores the offline workspace without project management 
     )
     await expect(members(local).locator('tbody tr')).toHaveCount(1)
     await expectNoProjectManagement(local)
-    await menu(local).getByRole('button', { name: '공간 데이터', exact: true }).click()
-    await local.getByRole('button', { name: '카페 샘플', exact: true }).click()
+    await local.getByRole('button', { name: '공간·부재 정보', exact: true }).click()
     await expect(
-      local.getByRole('heading', { name: '모노 카페 대시보드', exact: true }),
+      local.getByRole('heading', { name: '건물 모델 대시보드', exact: true }),
     ).toBeVisible()
-    await local.getByRole('button', { name: '건물 샘플', exact: true }).click()
     await expectColumnBusiness(local)
     await expect(detail(local)).toContainText(note)
     await expect(local.getByLabel('IFC 모델 3D 뷰어', { exact: true })).toBeVisible()

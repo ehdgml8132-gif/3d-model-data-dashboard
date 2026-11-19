@@ -1978,79 +1978,16 @@ td > small {
     font-size: 8px;
   }
 }
-.mobile-help {
-  display: none;
-}
-.cafe-sample-switch {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 5px;
-  padding: 4px;
-  border: 1px solid #456351;
-  border-radius: 8px;
-  margin-bottom: 25px;
-}
-.cafe-sample-switch button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 9px 4px;
-  border-radius: 5px;
-  color: #b6cab8;
-  font-size: 10px;
-  white-space: nowrap;
-}
-.cafe-sample-switch button.active {
-  background: #325944;
-  color: #e6f1db;
-}
-.cafe-sample-switch button:hover {
-  background: #3c644d;
-}
-.sample-loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 15px;
-  min-height: 100vh;
-  color: #64835b;
-  font-size: 13px;
-}
-.product-chip {
-  max-width: 100%;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  text-align: left;
-}
-.detail-product h2,
-.detail-revenue strong,
 .metric-card > strong {
   overflow-wrap: anywhere;
 }
 @media (max-width: 990px) {
-  .sidebar .cafe-sample-switch {
-    grid-template-columns: 1fr;
-    margin: 24px 0 0;
-    gap: 4px;
-    padding: 3px;
-  }
-  .cafe-sample-switch button {
-    padding: 10px 6px;
-  }
-  .cafe-sample-switch button span {
-    display: none;
-  }
   .brand > span:last-child,
   .workspace,
   .nav-caption,
   .sidebar-note,
   .sidebar-bottom {
     display: none;
-  }
-  .mobile-help {
-    display: grid;
   }
 }
 @media (prefers-reduced-motion: reduce) {

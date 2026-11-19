@@ -13,12 +13,6 @@
   justify-content: flex-end;
   max-width: 480px;
 }
-.building-header-actions .building-back {
-  min-height: 34px;
-  padding-top: 8px;
-  padding-bottom: 8px;
-  font-size: 9px;
-}
 .building-source-name {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -294,11 +288,6 @@
   .building-header-actions {
     max-width: 400px;
   }
-  .building-header-actions .building-back {
-    flex-basis: 100%;
-    max-width: 185px;
-    margin-left: auto;
-  }
 }
 @media (max-width: 760px) {
   .building-header-actions {
@@ -307,10 +296,6 @@
   }
   .building-header-actions .button {
     flex: 1;
-  }
-  .building-header-actions .building-back {
-    flex-basis: 100%;
-    max-width: none;
   }
   .building-import-progress {
     padding: 13px;
@@ -1117,14 +1102,14 @@
   }
 }
 @media (max-width: 990px) {
-  .building-app .building-sample-nav {
-    margin-top: 45px;
-  }
-  .building-app .sidebar .building-sample-nav .nav-item {
+  .building-app .sidebar .building-home-nav .nav-item {
     min-height: 48px;
-  }
-  .building-app .sidebar .building-sample-nav .nav-item > span {
-    display: none;
+    flex-direction: column;
+    gap: 4px;
+    padding: 7px 1px;
+    font-size: 9px;
+    text-align: center;
+    word-break: keep-all;
   }
   .building-model-meta {
     display: none;
@@ -1135,10 +1120,6 @@
   .building-table-tools {
     padding-left: 16px;
     padding-right: 16px;
-  }
-  .building-back {
-    font-size: 9px;
-    padding: 9px 10px;
   }
   .building-detail-title h2 {
     font-size: 15px;
@@ -1234,10 +1215,6 @@
   }
   .building-metrics .metric-card > strong {
     font-size: 22px;
-  }
-  .building-back {
-    width: 100%;
-    font-size: 11px;
   }
   .building-app .page-heading {
     gap: 14px;
@@ -1338,9 +1315,6 @@
   .building-quantity-note {
     margin-left: 18px;
     margin-right: 18px;
-  }
-  .building-back {
-    font-size: 10px;
   }
   .building-properties dt,
   .building-properties dd {

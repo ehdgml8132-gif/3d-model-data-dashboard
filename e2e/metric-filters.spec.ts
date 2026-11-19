@@ -16,7 +16,7 @@ const metric = (page: Page, name: string) =>
     .locator(':scope > strong')
 
 async function openBuilding(page: Page) {
-  await page.goto('/?sample=building')
+  await page.goto('/')
   await expect(page.getByRole('heading', { name: '건물 모델 대시보드', exact: true })).toBeVisible()
   await expect(page.locator('canvas')).toBeVisible()
 }
