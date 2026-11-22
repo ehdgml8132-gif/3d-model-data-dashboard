@@ -322,6 +322,14 @@ test('donut tooltip follows the hovered slice without covering the ring or total
     await test.step(`${width}px, ${reducedMotion}`, async () => {
       await page.setViewportSize({ width, height: 844 })
       await page.emulateMedia({ reducedMotion })
+      await expect
+        .poll(() =>
+          chart.evaluate((element) => {
+            const svg = element.querySelector('svg')
+            return svg ? Math.abs(svg.viewBox.baseVal.width - element.clientWidth) : Infinity
+          }),
+        )
+        .toBeLessThanOrEqual(1)
       await card.scrollIntoViewIfNeeded()
       const cardBounds = (await card.boundingBox())!
       const first = await sliceGeometry(0)
