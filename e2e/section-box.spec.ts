@@ -280,44 +280,58 @@ test('donut tooltip follows the hovered slice without covering the ring or total
   const total = chart.getByText('72', { exact: true })
   const tooltip = card.getByRole('tooltip')
 
-  for (const width of [1440, 360]) {
-    await test.step(`${width}px viewport`, async () => {
+  async function sliceGeometry(index: number) {
+    const sector = sectors.nth(index)
+    await expect(sector).toBeVisible()
+    return sector.evaluate((node) => {
+      const path = node as SVGPathElement
+      const cx = Number(path.getAttribute('cx'))
+      const cy = Number(path.getAttribute('cy'))
+      // Recharts draws the outer arc first, then connects to the inner arc.
+      const points = path
+        .getAttribute('d')!
+        .match(/-?[\d.]+/g)!
+        .map(Number)
+      const [startX, startY, outerRadius, , , largeArc, sweep, endX, endY, innerX, innerY] = points
+      const angle = Math.atan2(startY + endY - 2 * cy, startX + endX - 2 * cx) + largeArc * Math.PI
+      const gapAngle = Math.atan2(endY - cy, endX - cx) + (sweep ? 1 : -1) * (Math.PI / 120)
+      const midRadius = (outerRadius + Math.hypot(innerX - cx, innerY - cy)) / 2
+      const transform = path.getScreenCTM()!
+      const screen = (x: number, y: number) => {
+        const point = new DOMPoint(x, y).matrixTransform(transform)
+        return { x: point.x, y: point.y }
+      }
+      const atAngle = (radians: number) =>
+        screen(cx + Math.cos(radians) * midRadius, cy + Math.sin(radians) * midRadius)
+      const center = screen(cx, cy)
+      const edge = screen(cx + outerRadius, cy)
+      return {
+        center,
+        point: atAngle(angle),
+        gap: atAngle(gapAngle),
+        radius: Math.hypot(edge.x - center.x, edge.y - center.y),
+      }
+    })
+  }
+
+  for (const { width, reducedMotion } of [
+    { width: 1440, reducedMotion: 'no-preference' },
+    { width: 360, reducedMotion: 'no-preference' },
+    { width: 1440, reducedMotion: 'reduce' },
+  ] as const) {
+    await test.step(`${width}px, ${reducedMotion}`, async () => {
       await page.setViewportSize({ width, height: 844 })
+      await page.emulateMedia({ reducedMotion })
       await card.scrollIntoViewIfNeeded()
       const cardBounds = (await card.boundingBox())!
-      for (const [index, name, count] of [
-        [0, '기둥', '27개'],
-        [1, '보', '36개'],
-      ] as const) {
-        const sector = sectors.nth(index)
-        await expect(sector).toBeVisible()
-        const { center, point, radius } = await sector.evaluate((node) => {
-          const path = node as SVGPathElement
-          const cx = Number(path.getAttribute('cx'))
-          const cy = Number(path.getAttribute('cy'))
-          // Recharts draws the outer arc first, then connects to the inner arc.
-          const points = path
-            .getAttribute('d')!
-            .match(/-?[\d.]+/g)!
-            .map(Number)
-          const [startX, startY, outerRadius, , , largeArc, , endX, endY, innerX, innerY] = points
-          const angle =
-            Math.atan2(startY + endY - 2 * cy, startX + endX - 2 * cx) + largeArc * Math.PI
-          const midRadius = (outerRadius + Math.hypot(innerX - cx, innerY - cy)) / 2
-          const transform = path.getScreenCTM()!
-          const screen = (x: number, y: number) => {
-            const point = new DOMPoint(x, y).matrixTransform(transform)
-            return { x: point.x, y: point.y }
-          }
-          const center = screen(cx, cy)
-          const edge = screen(cx + outerRadius, cy)
-          return {
-            center,
-            point: screen(cx + Math.cos(angle) * midRadius, cy + Math.sin(angle) * midRadius),
-            radius: Math.hypot(edge.x - center.x, edge.y - center.y),
-          }
-        })
-        await page.mouse.move(point.x, point.y)
+      const first = await sliceGeometry(0)
+      const second = await sliceGeometry(1)
+
+      async function expectPlacement(
+        { center, point, radius }: typeof first,
+        name: string,
+        count: string,
+      ) {
         await expect(tooltip).toBeVisible()
         await expect(tooltip).toContainText(name)
         await expect(tooltip).toContainText(count)
@@ -352,6 +366,71 @@ test('donut tooltip follows the hovered slice without covering the ring or total
         expect(tip.y + tip.height).toBeLessThanOrEqual(
           Math.min(844, cardBounds.y + cardBounds.height),
         )
+      }
+
+      await page.mouse.move(first.point.x, first.point.y)
+      await expectPlacement(first, '기둥', '27개')
+      const movement = await tooltip.evaluateHandle((element) => {
+        const positions: {
+          x: number
+          y: number
+          width: number
+          height: number
+          opacity: number
+        }[] = []
+        let frame = 0
+        function sample() {
+          const { x, y, width, height } = element.getBoundingClientRect()
+          positions.push({
+            x: x + width / 2,
+            y: y + height / 2,
+            width,
+            height,
+            opacity: Number(getComputedStyle(element).opacity),
+          })
+          frame = requestAnimationFrame(sample)
+        }
+        sample()
+        return { element, positions, stop: () => cancelAnimationFrame(frame) }
+      })
+      try {
+        await page.mouse.move(first.gap.x, first.gap.y)
+        await expect(card.getByRole('tooltip', { includeHidden: true })).toContainText('기둥')
+        await page.mouse.move(second.point.x, second.point.y)
+        await expect(tooltip).toContainText('36개')
+        expect(
+          await tooltip.evaluate((node, original) => node === original.element, movement),
+        ).toBe(true)
+        await tooltip.evaluate(async (element) => {
+          await Promise.all(element.getAnimations().map((animation) => animation.finished))
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+        })
+        await expectPlacement(second, '보', '36개')
+        const positions = await movement.evaluate(({ positions }) => positions)
+        expect(
+          positions.every(
+            ({ x, y, width, height, opacity }) =>
+              opacity < 0.01 ||
+              Math.hypot(
+                Math.max(0, Math.abs(x - first.center.x) - width / 2),
+                Math.max(0, Math.abs(y - first.center.y) - height / 2),
+              ) >=
+                first.radius - 1,
+          ),
+        ).toBe(true)
+        if (width === 1440) {
+          const start = positions[0]
+          const end = positions.at(-1)!
+          const traveled = positions.some(
+            (point) =>
+              Math.hypot(point.x - start.x, point.y - start.y) > 5 &&
+              Math.hypot(point.x - end.x, point.y - end.y) > 5,
+          )
+          expect(traveled).toBe(reducedMotion === 'no-preference')
+        }
+      } finally {
+        await movement.evaluate(({ stop }) => stop())
+        await movement.dispose()
       }
       await page.mouse.move(0, 0)
       await expect(tooltip).toHaveCount(0)

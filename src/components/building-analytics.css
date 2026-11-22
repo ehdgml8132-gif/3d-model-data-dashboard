@@ -178,8 +178,9 @@
 }
 .building-kind-tooltip {
   position: absolute;
+  top: 0;
+  left: 0;
   width: max-content;
-  transform: translate(-50%, -50%);
   flex-direction: row;
   align-items: baseline;
   padding: 4px 8px;

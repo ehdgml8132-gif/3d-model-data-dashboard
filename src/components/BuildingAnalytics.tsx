@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { BarChart3, ChevronLeft, ChevronRight, ChartPie, Info } from 'lucide-react'
 import {
   Bar,
@@ -36,6 +36,8 @@ type FloorRow = {
 const FLOOR_PAGE_SIZE = 8
 const KIND_OUTER_RADIUS = 73
 const KIND_TOOLTIP_GAP = 7
+const KIND_TOOLTIP_MOVE_MS = 280
+const KIND_TOOLTIP_HIDE_MS = 90
 const KIND_STYLE = [
   { key: 'column', label: '기둥', color: '#527b63' },
   { key: 'beam', label: '보', color: '#a5bb83' },
@@ -50,63 +52,142 @@ const volumeFormat = new Intl.NumberFormat('ko-KR', {
 })
 const floorLabel = (floor: string) => (/^[123]F$/.test(floor) ? `${floor[0]}층` : floor)
 
+type Point = { x: number; y: number }
+const tooltipTransform = ({ x, y }: Point) => `translate(${x}px, ${y}px) translate(-50%, -50%)`
+
 function KindTooltip({
   active,
   coordinate,
   payload,
-}: Pick<TooltipContentProps<number, string>, 'active' | 'coordinate' | 'payload'>) {
+  hoverSequence,
+}: Pick<TooltipContentProps<number, string>, 'active' | 'coordinate' | 'payload'> & {
+  hoverSequence: RefObject<number>
+}) {
   const width = useChartWidth()
   const height = useChartHeight()
   const tooltip = useRef<HTMLDivElement>(null)
+  const motion = useRef<Animation | null>(null)
+  const previous = useRef<{ width: number; height: number; sequence: number } | null>(null)
+  const [lastItem, setLastItem] = useState<{
+    name: string | number | undefined
+    value: number
+  } | null>(null)
   const item = payload[0]
+  const name = item?.name
+  const value = item?.value
   const x = coordinate?.x
   const y = coordinate?.y
 
   useLayoutEffect(() => {
     const element = tooltip.current
-    if (!element || x === undefined || y === undefined || !width || !height) return
+    const wrapper = element?.parentElement
+    if (!active || x === undefined || y === undefined || typeof value !== 'number') return
+    if (!element || !wrapper || !width || !height) return
     const centerX = width / 2
     const centerY = height / 2
-    const dx = x - centerX
-    const dy = y - centerY
-    const length = Math.hypot(dx, dy)
-    if (!length) return
-
+    const angle = Math.atan2(y - centerY, x - centerX)
     const halfWidth = element.offsetWidth / 2
     const halfHeight = element.offsetHeight / 2
     const outer = KIND_OUTER_RADIUS + KIND_TOOLTIP_GAP
-    const radialDistance = outer + (Math.abs(dx) * halfWidth + Math.abs(dy) * halfHeight) / length
-    const left = Math.max(
-      halfWidth,
-      Math.min(width - halfWidth, centerX + (dx / length) * radialDistance),
-    )
-    let top = Math.max(
-      halfHeight,
-      Math.min(height - halfHeight, centerY + (dy / length) * radialDistance),
-    )
-    const horizontalGap = Math.max(0, Math.abs(left - centerX) - halfWidth)
-    if (horizontalGap < outer) {
-      // A narrow chart may push the tooltip inward. Clear the arc on the same side vertically.
-      const verticalOffset = Math.sqrt(outer ** 2 - horizontalGap ** 2) + halfHeight
-      if (Math.abs(top - centerY) < verticalOffset) {
-        top = centerY + (dy < 0 ? -verticalOffset : verticalOffset)
+    const place = (direction: number): Point => {
+      const dx = Math.cos(direction)
+      const dy = Math.sin(direction)
+      const distance = outer + Math.abs(dx) * halfWidth + Math.abs(dy) * halfHeight
+      const left = Math.max(halfWidth, Math.min(width - halfWidth, centerX + dx * distance))
+      let top = Math.max(halfHeight, Math.min(height - halfHeight, centerY + dy * distance))
+      const horizontalGap = Math.max(0, Math.abs(left - centerX) - halfWidth)
+      if (horizontalGap < outer) {
+        // Near the card edge, shift vertically to keep the entire tooltip outside the ring.
+        const verticalOffset = Math.sqrt(outer ** 2 - horizontalGap ** 2) + halfHeight
+        if (Math.abs(top - centerY) < verticalOffset) {
+          top = centerY + (dy < 0 ? -verticalOffset : verticalOffset)
+        }
       }
+      return { x: left, y: top }
     }
-    element.style.left = `${left}px`
-    element.style.top = `${top}px`
-  }, [active, height, item?.name, item?.value, width, x, y])
 
-  if (!active || !coordinate || typeof item?.value !== 'number') return null
+    const canAnimate =
+      previous.current?.width === width &&
+      previous.current.height === height &&
+      previous.current.sequence === hoverSequence.current &&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    previous.current = { width, height, sequence: hoverSequence.current }
+    setLastItem((previous) =>
+      previous && previous.name === name && previous.value === value ? previous : { name, value },
+    )
+
+    const target = place(angle)
+    const before = element.getBoundingClientRect()
+    const origin = wrapper.getBoundingClientRect()
+    const from = {
+      x: before.left + before.width / 2 - origin.left,
+      y: before.top + before.height / 2 - origin.top,
+    }
+    motion.current?.cancel()
+    element.style.transform = tooltipTransform(target)
+    if (!canAnimate || Math.hypot(target.x - from.x, target.y - from.y) < 1) return
+
+    const start = Math.atan2(from.y - centerY, from.x - centerX)
+    const delta = Math.atan2(Math.sin(angle - start), Math.cos(angle - start))
+    const steps = Math.max(1, Math.ceil(Math.abs(delta) / (Math.PI / 45)))
+    const points = [
+      from,
+      ...Array.from({ length: steps }, (_, index) => place(start + delta * ((index + 1) / steps))),
+    ]
+    const clearance = ({ x: left, y: top }: Point) =>
+      Math.hypot(
+        Math.max(0, Math.abs(left - centerX) - halfWidth),
+        Math.max(0, Math.abs(top - centerY) - halfHeight),
+      ) - KIND_OUTER_RADIUS
+    // Adjacent points must leave enough clearance for the straight step between them.
+    const canTravel = points.every((point, index) => {
+      if (index === 0) return clearance(point) > 0
+      const previous = points[index - 1]
+      return (
+        Math.hypot(point.x - previous.x, point.y - previous.y) <
+        clearance(point) + clearance(previous)
+      )
+    })
+    if (canTravel) {
+      motion.current = element.animate(
+        points.map((point) => ({ transform: tooltipTransform(point) })),
+        {
+          duration: KIND_TOOLTIP_MOVE_MS,
+          easing: 'ease-out',
+        },
+      )
+    } else {
+      // Some narrow charts have no path beside the ring. Relocate while fully faded out.
+      motion.current = element.animate(
+        clearance(from) > 0
+          ? [
+              { transform: tooltipTransform(from), opacity: 1 },
+              { transform: tooltipTransform(from), opacity: 0, offset: 0.4 },
+              { transform: tooltipTransform(target), opacity: 0, offset: 0.6 },
+              { transform: tooltipTransform(target), opacity: 1 },
+            ]
+          : [{ opacity: 0 }, { opacity: 1 }],
+        { duration: KIND_TOOLTIP_MOVE_MS, easing: 'ease-out' },
+      )
+    }
+  }, [active, height, hoverSequence, name, value, width, x, y])
+
+  useLayoutEffect(() => () => motion.current?.cancel(), [])
+
+  const displayedItem =
+    active && coordinate && typeof value === 'number' ? { name, value } : lastItem
+  if (!displayedItem) return null
   return (
     <div ref={tooltip} className="building-analytics-tooltip building-kind-tooltip" role="tooltip">
-      <strong>{item.name}</strong>
-      <span>{countFormat.format(item.value)}개</span>
+      <strong>{displayedItem.name}</strong>
+      <span>{countFormat.format(displayedItem.value)}개</span>
     </div>
   )
 }
 
 export default function BuildingAnalytics({ elements }: Props) {
   const titleId = useId()
+  const kindHoverSequence = useRef(0)
   const [metric, setMetric] = useState<'volume' | 'count'>('volume')
   const [page, setPage] = useState(0)
   const data = useMemo(() => {
@@ -335,7 +416,12 @@ export default function BuildingAnalytics({ elements }: Props) {
         </div>
         {elements.length ? (
           <div className="building-composition-body">
-            <div className="building-kind-chart" role="img" aria-label="부재 종류별 개수 차트">
+            <div
+              className="building-kind-chart"
+              role="img"
+              aria-label="부재 종류별 개수 차트"
+              onPointerLeave={() => kindHoverSequence.current++}
+            >
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart accessibilityLayer>
                   <Pie
@@ -354,8 +440,15 @@ export default function BuildingAnalytics({ elements }: Props) {
                   </Pie>
                   <Tooltip
                     isAnimationActive={false}
-                    wrapperStyle={{ width: '100%', height: '100%', transform: 'none' }}
-                    content={(props) => <KindTooltip {...props} />}
+                    wrapperStyle={{
+                      width: '100%',
+                      height: '100%',
+                      transform: 'none',
+                      transition: `visibility ${KIND_TOOLTIP_HIDE_MS}ms linear`,
+                    }}
+                    content={(props) => (
+                      <KindTooltip {...props} hoverSequence={kindHoverSequence} />
+                    )}
                   />
                 </PieChart>
               </ResponsiveContainer>
