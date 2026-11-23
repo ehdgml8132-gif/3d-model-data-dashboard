@@ -134,6 +134,8 @@ export function validateSavedProject(input: unknown): SavedProject {
       targetId: section.targetId === null ? null : identifier(section.targetId, '단면 기준 부재'),
       ranges: { x: readRange(ranges.x), y: readRange(ranges.y), z: readRange(ranges.z) },
     }
+    if (section.rotationY !== undefined)
+      sectionBox.rotationY = numeric(section.rotationY, '단면 회전 각도', -180, 180)
   }
 
   let camera: ProjectCamera | null = null

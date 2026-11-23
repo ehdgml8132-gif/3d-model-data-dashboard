@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
+import { sectionTransform } from './sectionBox'
 import { createSectionBoxRaycast } from './sectionBoxPicking'
 
 const width = 1000
@@ -29,10 +30,10 @@ function pick(helper: THREE.Box3Helper, view: THREE.Camera, point: { x: number; 
   return raycaster.intersectObject(helper, false)
 }
 
-function helper(bounds: THREE.Box3, view: THREE.Camera) {
+function helper(bounds: THREE.Box3, view: THREE.Camera, transform?: THREE.Matrix4) {
   const box = new THREE.Box3Helper(bounds)
   box.updateMatrixWorld(true)
-  box.raycast = createSectionBoxRaycast(bounds, view, width, height)
+  box.raycast = createSectionBoxRaycast(bounds, view, width, height, undefined, transform)
   return box
 }
 
@@ -93,6 +94,20 @@ describe('screen-space section box selection', () => {
     const edge = new THREE.Vector3(19, 30, 1)
     expect(pick(box, view, pixelPoint(view, edge))).toHaveLength(1)
     expect(pick(box, view, pixelPoint(view, new THREE.Vector3(20, 30, 1)))).toEqual([])
+  })
+
+  it('picks the transformed edge and ignores the old edge of an offset box', () => {
+    const bounds = new THREE.Box3(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(3, 1, 1))
+    const view = camera()
+    const transform = sectionTransform(bounds, 45)
+    const box = helper(bounds, view, transform)
+    const originalEdge = new THREE.Vector3(3, 0, -1)
+    const rotatedEdge = originalEdge.clone().applyMatrix4(transform)
+    const rotatedPixel = pixelPoint(view, rotatedEdge)
+    const hit = pick(box, view, rotatedPixel)[0]
+    expect(hit.point.distanceTo(rotatedEdge)).toBeLessThan(1e-8)
+    expect(pick(helper(bounds, view), view, rotatedPixel)).toEqual([])
+    expect(pick(box, view, pixelPoint(view, originalEdge))).toEqual([])
   })
 
   it('supports perspective picking without mutating the box, ray or camera', () => {

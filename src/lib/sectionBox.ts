@@ -6,6 +6,8 @@ export type SectionBoxSettings = {
   targetId: string | null
   /** Position of the six faces as percentages of the initial enclosing box. */
   ranges: { x: [number, number]; y: [number, number]; z: [number, number] }
+  /** Rotation in degrees about the initial enclosing box's vertical axis. */
+  rotationY?: number
 }
 
 export const fullSectionRanges = (): SectionBoxSettings['ranges'] => ({
@@ -73,9 +75,22 @@ export function sectionBounds(base: THREE.Box3, ranges: SectionBoxSettings['rang
   return result
 }
 
+/** Move section-box points from its unrotated coordinates into viewer space. */
+export function sectionTransform(base: THREE.Box3, rotationY = 0) {
+  const transform = new THREE.Matrix4()
+  if (!rotationY || !Number.isFinite(rotationY)) return transform
+  const angle = THREE.MathUtils.clamp(rotationY, -180, 180)
+  transform.makeRotationY(THREE.MathUtils.degToRad(angle))
+  const center = base.getCenter(new THREE.Vector3())
+  const rotatedCenter = center.clone().applyMatrix4(transform)
+  return transform.setPosition(center.sub(rotatedCenter))
+}
+
+const identity = new THREE.Matrix4()
+
 /** Three clips negative plane distances, so all six positive halfspaces are retained. */
-export function clippingPlanes(bounds: THREE.Box3) {
-  return [
+export function clippingPlanes(bounds: THREE.Box3, transform?: THREE.Matrix4) {
+  const planes = [
     new THREE.Plane(new THREE.Vector3(1, 0, 0), -bounds.min.x),
     new THREE.Plane(new THREE.Vector3(-1, 0, 0), bounds.max.x),
     new THREE.Plane(new THREE.Vector3(0, 1, 0), -bounds.min.y),
@@ -83,16 +98,31 @@ export function clippingPlanes(bounds: THREE.Box3) {
     new THREE.Plane(new THREE.Vector3(0, 0, 1), -bounds.min.z),
     new THREE.Plane(new THREE.Vector3(0, 0, -1), bounds.max.z),
   ]
+  if (transform && !transform.equals(identity)) {
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(transform)
+    for (const plane of planes) plane.applyMatrix4(transform, normalMatrix)
+  }
+  return planes
 }
 
 /** Filter before R3F dispatches pointer events: clipped foreground faces must
  * never stop a click that belongs to a visible member farther along the ray. */
-export function sectionRaycast(bounds: THREE.Box3 | null): THREE.Mesh['raycast'] {
+export function sectionRaycast(
+  bounds: THREE.Box3 | null,
+  transform?: THREE.Matrix4,
+): THREE.Mesh['raycast'] {
+  const inverse =
+    bounds && transform && !transform.equals(identity) ? transform.clone().invert() : null
+  const localPoint = inverse ? new THREE.Vector3() : null
   return function (this: THREE.Mesh, raycaster, intersections) {
     const start = intersections.length
     THREE.Mesh.prototype.raycast.call(this, raycaster, intersections)
-    if (bounds)
-      for (let index = intersections.length - 1; index >= start; index--)
-        if (!bounds.containsPoint(intersections[index].point)) intersections.splice(index, 1)
+    if (!bounds) return
+    for (let index = intersections.length - 1; index >= start; index--) {
+      const { point } = intersections[index]
+      const sectionPoint =
+        inverse && localPoint ? localPoint.copy(point).applyMatrix4(inverse) : point
+      if (!bounds.containsPoint(sectionPoint)) intersections.splice(index, 1)
+    }
   }
 }

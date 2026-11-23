@@ -61,6 +61,7 @@ function htmlFile(html: string) {
 describe('self-contained HTML project data', () => {
   it('round trips original IFC bytes, linked data and the full workspace in a real HTML document', async () => {
     const original = project()
+    original.snapshot.workspace.sectionBox!.rotationY = 55
     const blob = await encodeProjectHtml(original, template)
     expect(blob.type).toBe(PROJECT_HTML_MIME)
     const html = await blob.text()

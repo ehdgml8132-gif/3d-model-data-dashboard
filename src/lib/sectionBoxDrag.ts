@@ -107,6 +107,7 @@ export function projectSectionAxis(
   extent: number,
   width: number,
   height: number,
+  transform?: THREE.Matrix4,
 ): SectionDragProjection {
   const fallback = (): SectionDragProjection => ({
     x: 0,
@@ -122,9 +123,14 @@ export function projectSectionAxis(
     height <= 0
   )
     return fallback()
-  const from = origin.clone().project(camera)
+  const from = origin.clone()
   const to = origin.clone()
   to[axis] += extent
+  if (transform) {
+    from.applyMatrix4(transform)
+    to.applyMatrix4(transform)
+  }
+  from.project(camera)
   to.project(camera)
   const x = ((to.x - from.x) * width) / 2
   const y = (-(to.y - from.y) * height) / 2

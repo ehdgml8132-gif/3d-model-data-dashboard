@@ -7,6 +7,7 @@ import {
   clippingPlanes,
   sectionBounds,
   sectionRaycast,
+  sectionTransform,
 } from './sectionBox'
 
 const box = (min: [number, number, number], max: [number, number, number]) =>
@@ -75,6 +76,19 @@ describe('section box bounds', () => {
     expect(base.min.toArray()).toEqual([-10, 0, 100])
     expect(base.max.toArray()).toEqual([10, 20, 140])
   })
+
+  it('rotates about the original nonzero center after the range changes', () => {
+    const base = box([1, -1, -1], [7, 1, 1])
+    const clipped = sectionBounds(base, { x: [50, 100], y: [0, 100], z: [0, 100] })
+    const transform = sectionTransform(base, 90)
+    const center = base.getCenter(new THREE.Vector3())
+    const clippedCenter = clipped.getCenter(new THREE.Vector3())
+    expect(center.clone().applyMatrix4(transform).distanceTo(center)).toBeLessThan(1e-12)
+    expect(
+      clippedCenter.applyMatrix4(transform).distanceTo(new THREE.Vector3(4, 0, -1.5)),
+    ).toBeLessThan(1e-12)
+    expect(sectionTransform(base).equals(new THREE.Matrix4())).toBe(true)
+  })
 })
 
 describe('section clipping and picking', () => {
@@ -99,6 +113,30 @@ describe('section clipping and picking', () => {
     }
   })
 
+  it('transforms all six clipping planes to keep the rotated box interior', () => {
+    const base = box([1, -1, -1], [7, 1, 1])
+    const bounds = sectionBounds(base, { x: [50, 100], y: [0, 100], z: [0, 100] })
+    const transform = sectionTransform(base, 90)
+    const planes = clippingPlanes(bounds, transform)
+    const inside = new THREE.Vector3(4, 0, -2)
+    const outside = new THREE.Vector3(6, 0, 0)
+    expect(bounds.containsPoint(inside)).toBe(false)
+    expect(planes.every((plane) => plane.distanceToPoint(inside) > 0)).toBe(true)
+    expect(bounds.containsPoint(outside)).toBe(true)
+    expect(planes.some((plane) => plane.distanceToPoint(outside) < 0)).toBe(true)
+    const center = bounds.getCenter(new THREE.Vector3()).applyMatrix4(transform)
+    for (const [index, axis] of (['x', 'y', 'z'] as const).entries()) {
+      for (const side of ['min', 'max'] as const) {
+        const facePoint = bounds.getCenter(new THREE.Vector3())
+        facePoint[axis] = bounds[side][axis]
+        facePoint.applyMatrix4(transform)
+        const plane = planes[index * 2 + Number(side === 'max')]
+        expect(plane.distanceToPoint(facePoint)).toBeCloseTo(0)
+        expect(plane.distanceToPoint(center)).toBeGreaterThan(0)
+      }
+    }
+  })
+
   it('lets a ray pass clipped foreground geometry to select an interior member', () => {
     const geometry = new THREE.BoxGeometry(1, 1, 1)
     const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
@@ -120,6 +158,30 @@ describe('section clipping and picking', () => {
 
     foreground.raycast = sectionRaycast(null)
     expect(ray.intersectObjects([foreground, interior], false)[0].object).toBe(foreground)
+    geometry.dispose()
+    material.dispose()
+  })
+
+  it('selects the member visible in the rotated box and returns world-space hits', () => {
+    const geometry = new THREE.BoxGeometry(1, 1, 1)
+    const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
+    const foreground = new THREE.Mesh(geometry, material)
+    const interior = new THREE.Mesh(geometry, material)
+    foreground.position.set(6, 0, -2)
+    interior.position.set(4, 0, -2)
+    foreground.updateMatrixWorld(true)
+    interior.updateMatrixWorld(true)
+    const ray = new THREE.Raycaster(new THREE.Vector3(10, 0, -2), new THREE.Vector3(-1, 0, 0))
+    const meshes = [foreground, interior]
+    expect(ray.intersectObjects(meshes, false)[0].object).toBe(foreground)
+
+    const base = box([1, -1, -1], [7, 1, 1])
+    const bounds = sectionBounds(base, { x: [50, 100], y: [0, 100], z: [0, 100] })
+    const transform = sectionTransform(base, 90)
+    foreground.raycast = interior.raycast = sectionRaycast(bounds, transform)
+    const intersections = ray.intersectObjects(meshes, false)
+    expect(intersections[0].point.toArray()).toEqual([4.5, 0, -2])
+    expect(intersections.every((hit) => hit.object === interior)).toBe(true)
     geometry.dispose()
     material.dispose()
   })

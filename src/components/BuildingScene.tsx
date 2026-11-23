@@ -9,6 +9,7 @@ import {
   clippingPlanes,
   sectionBounds,
   sectionRaycast,
+  sectionTransform,
   type SectionBoxSettings,
 } from '../lib/sectionBox'
 import { FrameBoxCamera, SectionBoxVisual } from './SectionBox'
@@ -34,20 +35,21 @@ function ElementMesh({
   element,
   selected,
   onSelect,
-  clipBounds,
+  sectionActive,
+  raycast,
   planes,
 }: {
   element: BuildingElement
   selected: boolean
   onSelect: Props['onSelect']
-  clipBounds: THREE.Box3 | null
+  sectionActive: boolean
+  raycast: THREE.Mesh['raycast']
   planes: THREE.Plane[]
 }) {
   const [hovered, setHovered] = useState(false)
   const isSlab = element.kind === 'slab'
   const color = selected ? '#63ab8e' : hovered ? '#e0b46e' : COLORS[element.kind]
-  const raycast = useMemo(() => sectionRaycast(clipBounds), [clipBounds])
-  useEffect(() => setHovered(false), [clipBounds])
+  useEffect(() => setHovered(false), [planes])
   useEffect(() => {
     if (hovered) document.body.style.cursor = 'pointer'
     return () => {
@@ -68,8 +70,8 @@ function ElementMesh({
   return (
     <group position={element.position}>
       <mesh
-        {...(!isSlab || clipBounds ? handlers : {})}
-        raycast={isSlab && !clipBounds ? ignoreRaycast : raycast}
+        {...(!isSlab || sectionActive ? handlers : {})}
+        raycast={isSlab && !sectionActive ? ignoreRaycast : raycast}
         castShadow={!isSlab}
         receiveShadow
       >
@@ -80,7 +82,7 @@ function ElementMesh({
           transparent={isSlab}
           opacity={isSlab ? (selected ? 0.55 : 0.22) : 1}
           depthWrite={!isSlab}
-          side={clipBounds ? THREE.DoubleSide : THREE.FrontSide}
+          side={sectionActive ? THREE.DoubleSide : THREE.FrontSide}
           clippingPlanes={planes}
           clipShadows
         />
@@ -102,7 +104,7 @@ function ElementMesh({
             roughness={0.7}
             clippingPlanes={planes}
             clipShadows
-            side={clipBounds ? THREE.DoubleSide : THREE.FrontSide}
+            side={sectionActive ? THREE.DoubleSide : THREE.FrontSide}
           />
         </mesh>
       )}
@@ -185,15 +187,25 @@ export default function BuildingScene({
   const visible = filterBuildingElements(elements, floor)
   const base = floor === 'all' ? 0 : (Number.parseInt(floor) - 1) * 3.2
   const sectionTarget = sectionBox?.targetId
+  const sectionRanges = sectionBox?.ranges
+  const rotationY = sectionBox?.rotationY ?? 0
   const sectionBase = useMemo(
     () => (sectionTarget === undefined ? null : boundsForSample(BUILDING_ELEMENTS, sectionTarget)),
     [sectionTarget],
   )
   const clipBounds = useMemo(
-    () => (sectionBase && sectionBox ? sectionBounds(sectionBase, sectionBox.ranges) : null),
-    [sectionBase, sectionBox],
+    () => (sectionBase && sectionRanges ? sectionBounds(sectionBase, sectionRanges) : null),
+    [sectionBase, sectionRanges],
   )
-  const planes = useMemo(() => (clipBounds ? clippingPlanes(clipBounds) : []), [clipBounds])
+  const transform = useMemo(
+    () => (sectionBase ? sectionTransform(sectionBase, rotationY) : undefined),
+    [sectionBase, rotationY],
+  )
+  const planes = useMemo(
+    () => (clipBounds ? clippingPlanes(clipBounds, transform) : []),
+    [clipBounds, transform],
+  )
+  const raycast = useMemo(() => sectionRaycast(clipBounds, transform), [clipBounds, transform])
   return (
     <Canvas
       orthographic
@@ -258,7 +270,8 @@ export default function BuildingScene({
           element={element}
           selected={selectedId === element.id}
           onSelect={onSelect}
-          clipBounds={clipBounds}
+          sectionActive={clipBounds !== null}
+          raycast={raycast}
           planes={planes}
         />
       ))}
@@ -283,17 +296,25 @@ export default function BuildingScene({
       )}
       <SectionBoxVisual
         bounds={clipBounds}
+        transform={transform}
+        rotationY={rotationY}
         selected={sectionBoxSelected}
         onSelect={onSectionBoxSelect}
       />
-      {sectionBoxSelected && sectionBase && clipBounds && sectionBox && onSectionBoxChange && (
-        <SectionBoxHandles
-          baseBounds={sectionBase}
-          bounds={clipBounds}
-          settings={sectionBox}
-          onChange={onSectionBoxChange}
-        />
-      )}
+      {sectionBoxSelected &&
+        sectionBase &&
+        clipBounds &&
+        transform &&
+        sectionBox &&
+        onSectionBoxChange && (
+          <SectionBoxHandles
+            baseBounds={sectionBase}
+            bounds={clipBounds}
+            transform={transform}
+            settings={sectionBox}
+            onChange={onSectionBoxChange}
+          />
+        )}
     </Canvas>
   )
 }

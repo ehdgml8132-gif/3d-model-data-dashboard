@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MAX_IFC_ELEMENTS, MAX_IFC_FILE_BYTES } from '../ifc/limits'
 import { BUSINESS_LIMITS, parseBusinessCsv } from '../lib/business'
 import { createBuildingMetricFilters } from '../lib/buildingFilters'
+import { fullSectionRanges } from '../lib/sectionBox'
 import { buildProjectRecord, listProjects, summarizeProject, writeProject } from './storage'
 import type { SavedProject } from './types'
 import { validateSavedProject } from './validation'
@@ -126,6 +127,28 @@ describe('project records and validation', () => {
       ranges: ranges as NonNullable<typeof record.snapshot.workspace.sectionBox>['ranges'],
     }
     expect(() => validateSavedProject(record)).toThrow(/단면/)
+  })
+
+  it('preserves section-box rotation in saved records and accepts older boxes without an angle', () => {
+    const record = project()
+    const section = { targetId: null, ranges: fullSectionRanges() }
+    record.snapshot.workspace.sectionBox = section
+    expect(validateSavedProject(record).snapshot.workspace.sectionBox).toStrictEqual(section)
+    for (const rotationY of [-180, 0, 42.5, 180]) {
+      record.snapshot.workspace.sectionBox = { ...section, rotationY }
+      const saved = buildProjectRecord(record.name, record.snapshot)
+      expect(saved.snapshot.workspace.sectionBox).toStrictEqual({ ...section, rotationY })
+    }
+  })
+
+  it.each([-181, 181, Infinity, NaN])('rejects invalid section-box rotation %s', (rotationY) => {
+    const record = project()
+    record.snapshot.workspace.sectionBox = {
+      targetId: null,
+      ranges: fullSectionRanges(),
+      rotationY,
+    }
+    expect(() => validateSavedProject(record)).toThrow(/단면 회전 각도/)
   })
 
   it('rejects unusable camera state without silently resetting it', () => {

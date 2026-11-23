@@ -8,10 +8,14 @@ const viewDirection = new THREE.Vector3(1, 0.85, 1).normalize()
 
 export function SectionBoxVisual({
   bounds,
+  transform,
+  rotationY = 0,
   selected = false,
   onSelect,
 }: {
   bounds: THREE.Box3 | null
+  transform?: THREE.Matrix4
+  rotationY?: number
   selected?: boolean
   onSelect?: () => void
 }) {
@@ -21,19 +25,20 @@ export function SectionBoxVisual({
   const helper = useMemo(() => {
     if (!bounds) return null
     const box = new THREE.Box3Helper(bounds, new THREE.Color('#2b8c79'))
-    // The helper's geometry has its own scale/position. Pick the original world
-    // bounds in screen pixels instead, so zoom and IFC units do not change the
-    // click tolerance or apply the helper transform to the bounds twice.
-    box.raycast = selectable
-      ? createSectionBoxRaycast(bounds, camera, size.width, size.height)
-      : ignoreRaycast
     const material = box.material as THREE.LineBasicMaterial
     material.depthTest = false
     material.transparent = true
     material.opacity = 0.8
     box.renderOrder = 10
     return box
-  }, [bounds, camera, selectable, size.width, size.height])
+  }, [bounds])
+  const raycast = useMemo(
+    () =>
+      bounds && selectable
+        ? createSectionBoxRaycast(bounds, camera, size.width, size.height, undefined, transform)
+        : ignoreRaycast,
+    [bounds, camera, selectable, size.width, size.height, transform],
+  )
   useEffect(() => setHovered(false), [bounds])
   useEffect(() => {
     if (!helper) return
@@ -56,17 +61,20 @@ export function SectionBoxVisual({
     if (bounds) {
       canvas.dataset.sectionMin = JSON.stringify(bounds.min.toArray())
       canvas.dataset.sectionMax = JSON.stringify(bounds.max.toArray())
+      canvas.dataset.sectionRotationY = String(rotationY)
     } else {
       delete canvas.dataset.sectionMin
       delete canvas.dataset.sectionMax
+      delete canvas.dataset.sectionRotationY
     }
     return () => {
       delete canvas.dataset.sectionBox
       delete canvas.dataset.sectionSelected
       delete canvas.dataset.sectionMin
       delete canvas.dataset.sectionMax
+      delete canvas.dataset.sectionRotationY
     }
-  }, [bounds, gl, selected])
+  }, [bounds, gl, rotationY, selected])
   useEffect(() => {
     if (!bounds || !onSelect) return
     const canvas = gl.domElement
@@ -97,20 +105,23 @@ export function SectionBoxVisual({
     [helper],
   )
   return helper ? (
-    <primitive
-      object={helper}
-      onClick={(event: ThreeEvent<MouseEvent>) => {
-        if (!onSelect) return
-        event.stopPropagation()
-        onSelect()
-      }}
-      onPointerOver={(event: ThreeEvent<PointerEvent>) => {
-        if (!onSelect) return
-        event.stopPropagation()
-        setHovered(true)
-      }}
-      onPointerOut={() => setHovered(false)}
-    />
+    <group matrix={transform} matrixAutoUpdate={false}>
+      <primitive
+        object={helper}
+        raycast={raycast}
+        onClick={(event: ThreeEvent<MouseEvent>) => {
+          if (!onSelect) return
+          event.stopPropagation()
+          onSelect()
+        }}
+        onPointerOver={(event: ThreeEvent<PointerEvent>) => {
+          if (!onSelect) return
+          event.stopPropagation()
+          setHovered(true)
+        }}
+        onPointerOut={() => setHovered(false)}
+      />
+    </group>
   ) : null
 }
 

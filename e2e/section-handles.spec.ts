@@ -10,6 +10,8 @@ type Bounds = { min: number[]; max: number[] }
 
 const handle = (page: Page, axis: string, side: '최소' | '최대') =>
   page.getByRole('button', { name: `${axis} ${side} 단면 이동`, exact: true })
+const rotationSlider = (page: Page) =>
+  page.getByRole('slider', { name: '단면상자 수평 회전', exact: true })
 const details = (page: Page) => page.getByRole('article', { name: '선택한 부재 정보', exact: true })
 const members = (page: Page) => page.getByRole('article', { name: '부재 목록', exact: true })
 
@@ -56,6 +58,8 @@ async function selectBox(page: Page, base: Bounds, touch = false) {
   )
   camera.updateProjectionMatrix()
   const current = await boundsOf(page)
+  const rotation = (Number(await canvas.getAttribute('data-section-rotation-y')) * Math.PI) / 180
+  const up = new Vector3(0, 1, 0)
   const points: { x: number; y: number }[] = []
   for (let axis = 0; axis < 3; axis++) {
     const other = [0, 1, 2].filter((value) => value !== axis)
@@ -64,7 +68,12 @@ async function selectBox(page: Page, base: Bounds, touch = false) {
         const coordinates = current.min.map((value, index) => (value + current.max[index]) / 2)
         coordinates[other[0]] = (first ? current.max : current.min)[other[0]]
         coordinates[other[1]] = (second ? current.max : current.min)[other[1]]
-        const point = new Vector3().fromArray(coordinates).project(camera)
+        const point = new Vector3()
+          .fromArray(coordinates)
+          .sub(center)
+          .applyAxisAngle(up, rotation)
+          .add(center)
+          .project(camera)
         points.push({
           x: ((point.x + 1) * viewport.width) / 2,
           y: ((1 - point.y) * viewport.height) / 2,
@@ -287,7 +296,7 @@ test('selecting the box reveals face arrows that resize the live sample and rele
   expect(errors).toEqual([])
 })
 
-test('direct arrows resize a selected real IFC member without changing its quantity or target', async ({
+test('rotated IFC face arrows resize locally and the project restores the same cut', async ({
   page,
 }) => {
   await openBuilding(page)
@@ -300,21 +309,58 @@ test('direct arrows resize a selected real IFC member without changing its quant
   await members(page)
     .getByRole('button', { name: /Round concrete column G.*선택$/ })
     .click()
-  await enableSection(page)
+  const base = await enableSection(page)
   const canvas = page.getByLabel('IFC 모델 3D 뷰어', { exact: true })
   await expect(canvas).toHaveAttribute('data-section-box', 'true')
-  const beforeMin = JSON.parse((await canvas.getAttribute('data-section-min'))!) as number[]
-  const beforeMax = JSON.parse((await canvas.getAttribute('data-section-max'))!) as number[]
-  expect(beforeMax[1] - beforeMin[1]).toBeGreaterThan(3)
-  expect(beforeMax[1] - beforeMin[1]).toBeLessThan(4)
+  expect(base.max[1] - base.min[1]).toBeGreaterThan(3)
+  expect(base.max[1] - base.min[1]).toBeLessThan(4)
+  const rotation = rotationSlider(page)
+  const xHandle = handle(page, 'X', '최대')
+  const beforeDirection = await arrowDirection(xHandle)
+  await rotation.fill('40')
+  await expect(canvas).toHaveAttribute('data-section-rotation-y', '40')
+  expect(await boundsOf(page)).toEqual(base)
+  await expect
+    .poll(async () => {
+      const direction = await arrowDirection(xHandle)
+      return Math.hypot(direction.x - beforeDirection.x, direction.y - beforeDirection.y)
+    })
+    .toBeGreaterThan(0.1)
+  await dragInward(page, xHandle, 20)
+  await expect.poll(() => faceValue(page, 'X', '최대')).toBeLessThan(95)
+  const cutX = await boundsOf(page)
+  expect(cutX.min).toEqual(base.min)
+  expect(cutX.max[0]).toBeLessThan(base.max[0])
+  expect(cutX.max.slice(1)).toEqual(base.max.slice(1))
   await dragInward(page, handle(page, 'Y', '최대'), 60)
   await expect.poll(() => faceValue(page, 'Y', '최대')).toBeLessThan(95)
-  const afterMax = JSON.parse((await canvas.getAttribute('data-section-max'))!) as number[]
-  expect(afterMax[1]).toBeLessThan(beforeMax[1])
+  const clipped = await boundsOf(page)
+  expect(clipped.max[1]).toBeLessThan(base.max[1])
   await expect(details(page)).toContainText('Round concrete column G')
   await expect(page.getByTestId('building-selected-volume')).toContainText('0.59')
   await expect(members(page).locator('tbody tr')).toHaveCount(5)
+  await page.keyboard.press('Escape')
+  await expect(rotation).toHaveCount(0)
+  await selectBox(page, base)
+  await expect(rotation).toHaveValue('40')
   await expectOrbitWorks(page)
+
+  const toolbar = page.getByRole('region', { name: '프로젝트 작업공간', exact: true })
+  const openProject = toolbar.getByRole('button', { name: '프로젝트 열기', exact: true })
+  await toolbar.getByRole('button', { name: '프로젝트 저장', exact: true }).click()
+  await expect(openProject).toBeEnabled()
+  await page.getByRole('button', { name: '샘플로 돌아가기', exact: true }).click()
+  await expect(members(page).locator('tbody tr')).toHaveCount(72)
+  await openProject.click()
+  const picker = page.getByRole('dialog', { name: '프로젝트 열기', exact: true })
+  await picker.getByRole('button', { name: 'handle-building 열기', exact: true }).click()
+  await expect(picker).toHaveCount(0, { timeout: 45_000 })
+  await expect(canvas).toHaveAttribute('data-section-rotation-y', '40')
+  await expect(canvas).toHaveAttribute('data-section-selected', 'false')
+  expect(await boundsOf(page)).toEqual(clipped)
+  await expect(rotation).toHaveCount(0)
+  await canvas.press('Enter')
+  await expect(rotation).toHaveValue('40')
 })
 
 test('touch dragging does not scroll the page and touch cancellation restores orbiting', async ({

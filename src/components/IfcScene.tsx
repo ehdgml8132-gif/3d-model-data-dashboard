@@ -17,6 +17,7 @@ import {
   clippingPlanes,
   sectionBounds,
   sectionRaycast,
+  sectionTransform,
   type SectionBoxSettings,
 } from '../lib/sectionBox'
 import { FrameBoxCamera, SectionBoxVisual } from './SectionBox'
@@ -110,14 +111,14 @@ function IfcMesh({
   mesh,
   selected,
   onSelect,
-  clipBounds,
+  raycast,
   planes,
   opacityMultiplier,
 }: {
   mesh: PlacedMesh
   selected: boolean
   onSelect: Props['onSelect']
-  clipBounds: THREE.Box3 | null
+  raycast: THREE.Mesh['raycast']
   planes: THREE.Plane[]
   opacityMultiplier: number
 }) {
@@ -135,8 +136,7 @@ function IfcMesh({
     // Three uses different shader variants for opaque and translucent surfaces.
     if (material.current) material.current.needsUpdate = true
   }, [transparent])
-  const raycast = useMemo(() => sectionRaycast(clipBounds), [clipBounds])
-  useEffect(() => setHovered(false), [clipBounds])
+  useEffect(() => setHovered(false), [planes])
 
   useEffect(() => {
     if (!hovered) return
@@ -223,6 +223,8 @@ const ModelContents = memo(function ModelContents({
     return bounds.isEmpty() ? prepared.bounds : bounds
   }, [prepared, visible])
   const sectionTarget = sectionBox?.targetId
+  const sectionRanges = sectionBox?.ranges
+  const rotationY = sectionBox?.rotationY ?? 0
   const sectionBase = useMemo(
     () =>
       sectionTarget === undefined
@@ -231,10 +233,18 @@ const ModelContents = memo(function ModelContents({
     [prepared, sectionTarget],
   )
   const clipBounds = useMemo(
-    () => (sectionBase && sectionBox ? sectionBounds(sectionBase, sectionBox.ranges) : null),
-    [sectionBase, sectionBox],
+    () => (sectionBase && sectionRanges ? sectionBounds(sectionBase, sectionRanges) : null),
+    [sectionBase, sectionRanges],
   )
-  const planes = useMemo(() => (clipBounds ? clippingPlanes(clipBounds) : []), [clipBounds])
+  const transform = useMemo(
+    () => (sectionBase ? sectionTransform(sectionBase, rotationY) : undefined),
+    [sectionBase, rotationY],
+  )
+  const planes = useMemo(
+    () => (clipBounds ? clippingPlanes(clipBounds, transform) : []),
+    [clipBounds, transform],
+  )
+  const raycast = useMemo(() => sectionRaycast(clipBounds, transform), [clipBounds, transform])
   const ground = useMemo(() => {
     const extent = prepared.bounds.getSize(new THREE.Vector3())
     const size = Math.max(extent.x, extent.z, extent.y * 0.2, 0.1) * 1.35
@@ -263,7 +273,7 @@ const ModelContents = memo(function ModelContents({
           mesh={mesh}
           selected={selectedId === mesh.elementId}
           onSelect={onSelect}
-          clipBounds={clipBounds}
+          raycast={raycast}
           planes={planes}
           opacityMultiplier={opacityMultiplier}
         />
@@ -271,17 +281,25 @@ const ModelContents = memo(function ModelContents({
       <FrameBoxCamera bounds={sectionBase ?? visibleBounds} resetKey={resetKey} />
       <SectionBoxVisual
         bounds={clipBounds}
+        transform={transform}
+        rotationY={rotationY}
         selected={sectionBoxSelected}
         onSelect={onSectionBoxSelect}
       />
-      {sectionBoxSelected && sectionBase && clipBounds && sectionBox && onSectionBoxChange && (
-        <SectionBoxHandles
-          baseBounds={sectionBase}
-          bounds={clipBounds}
-          settings={sectionBox}
-          onChange={onSectionBoxChange}
-        />
-      )}
+      {sectionBoxSelected &&
+        sectionBase &&
+        clipBounds &&
+        transform &&
+        sectionBox &&
+        onSectionBoxChange && (
+          <SectionBoxHandles
+            baseBounds={sectionBase}
+            bounds={clipBounds}
+            transform={transform}
+            settings={sectionBox}
+            onChange={onSectionBoxChange}
+          />
+        )}
       {onCameraChange && cameraCapture && (
         <ProjectCameraSync
           restore={cameraRestore ?? null}

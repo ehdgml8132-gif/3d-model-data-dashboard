@@ -10,6 +10,8 @@ const detail = (page: Page) => page.getByRole('article', { name: '선택한 부�
 const members = (page: Page) => page.getByRole('article', { name: '부재 목록', exact: true })
 const handle = (page: Page, axis: string, side: '최소' | '최대') =>
   page.getByRole('button', { name: `${axis} ${side} 단면 이동`, exact: true })
+const rotationSlider = (page: Page) =>
+  page.getByRole('slider', { name: '단면상자 수평 회전', exact: true })
 const graphData = (page: Page) =>
   page.getByRole('table', { name: '층별 그래프 데이터', exact: true })
 
@@ -79,6 +81,8 @@ async function selectBox(page: Page, base: Bounds) {
   )
   camera.updateProjectionMatrix()
   const current = await boundsOf(canvas)
+  const rotation = (Number(await canvas.getAttribute('data-section-rotation-y')) * Math.PI) / 180
+  const up = new Vector3(0, 1, 0)
   const points: { x: number; y: number }[] = []
   for (let axis = 0; axis < 3; axis++) {
     const other = [0, 1, 2].filter((value) => value !== axis)
@@ -87,7 +91,12 @@ async function selectBox(page: Page, base: Bounds) {
         const coordinates = current.min.map((value, index) => (value + current.max[index]) / 2)
         coordinates[other[0]] = (first ? current.max : current.min)[other[0]]
         coordinates[other[1]] = (second ? current.max : current.min)[other[1]]
-        const point = new Vector3().fromArray(coordinates).project(camera)
+        const point = new Vector3()
+          .fromArray(coordinates)
+          .sub(center)
+          .applyAxisAngle(up, rotation)
+          .add(center)
+          .project(camera)
         points.push({
           x: ((point.x + 1) * viewport.width) / 2,
           y: ((1 - point.y) * viewport.height) / 2,
@@ -134,12 +143,33 @@ test('box visibility, selection and clipping remain independent across floor and
   const base = await enableSection(page)
   expect(base.max[1] - base.min[1]).toBeGreaterThan(9)
   await selectBox(page, base)
+  const canvas = page.locator('canvas')
+  const rotation = rotationSlider(page)
+  await expect(rotation).toHaveValue('0')
+  await expect(rotation).toHaveAttribute('min', '-180')
+  await expect(rotation).toHaveAttribute('max', '180')
+  await expect(rotation).toHaveAttribute('step', '1')
+  await expect(page.getByRole('slider', { name: /^(?!단면상자 수평 회전$)/ })).toHaveCount(0)
+  await rotation.fill('44')
+  await rotation.press('ArrowRight')
+  await expect(canvas).toHaveAttribute('data-section-rotation-y', '45')
+  expect(await boundsOf(canvas)).toEqual(base)
+  await expect(members(page).locator('tbody tr')).toHaveCount(72)
+  await expect(page.getByRole('region', { name: '건물 집계 지표' })).toContainText('64.53 m³')
+
   await setFace(page, 'Y', '최대', 55)
   const clipped = await boundsOf(page.locator('canvas'))
   await page.keyboard.press('Escape')
   await expect(page.locator('.section-face-handle')).toHaveCount(0)
+  await expect(rotation).toHaveCount(0)
+  await expect(canvas).toHaveAttribute('data-section-rotation-y', '45')
   expect(await boundsOf(page.locator('canvas'))).toEqual(clipped)
   await selectBox(page, base)
+  await expect(rotation).toHaveValue('45')
+  await page.getByRole('button', { name: '단면 회전 초기화', exact: true }).click()
+  await expect(rotation).toHaveValue('0')
+  await expect(canvas).toHaveAttribute('data-section-rotation-y', '0')
+  expect(await boundsOf(canvas)).toEqual(clipped)
   await page.locator('canvas').click({ position: { x: 12, y: 12 } })
   await expect(page.locator('.section-face-handle')).toHaveCount(0)
   expect(await boundsOf(page.locator('canvas'))).toEqual(clipped)
@@ -246,9 +276,7 @@ test('IFC box selection uses placed geometry and resets after restoring the samp
   await expectNoObjectSelection(page)
 })
 
-test('graphs remain visible and the slider-free box layout fits a mobile viewport', async ({
-  page,
-}) => {
+test('graphs and the unselected section box fit a mobile viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await openBuilding(page)
   const charts = page.getByRole('region', { name: '건물 데이터 그래프', exact: true })

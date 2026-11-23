@@ -25,6 +25,7 @@ import './section-box-handles.css'
 type Props = {
   baseBounds: THREE.Box3
   bounds: THREE.Box3
+  transform: THREE.Matrix4
   settings: SectionBoxSettings
   onChange: (next: SectionBoxSettings) => void
 }
@@ -60,7 +61,13 @@ const faces: Face[] = axes.flatMap((axis) => [
 const axisColors = { x: '#b37456', y: '#39826d', z: '#507fa6' }
 const dragCursorClass = 'section-handle-dragging'
 
-export default function SectionBoxHandles({ baseBounds, bounds, settings, onChange }: Props) {
+export default function SectionBoxHandles({
+  baseBounds,
+  bounds,
+  transform,
+  settings,
+  onChange,
+}: Props) {
   const { camera, controls, size } = useThree()
   const current = useRef({ settings, onChange })
   current.current = { settings, onChange }
@@ -76,21 +83,23 @@ export default function SectionBoxHandles({ baseBounds, bounds, settings, onChan
         ...baseBounds.max.toArray(),
         ...bounds.min.toArray(),
         ...bounds.max.toArray(),
+        ...transform.elements,
         width,
         height,
       ].join(',')
       if (layoutCache.current?.key === key) return layoutCache.current.positions
       const projected = faces.map((face) => {
-        const world = bounds.getCenter(new THREE.Vector3())
-        world[face.axis] = face.side === 0 ? bounds.min[face.axis] : bounds.max[face.axis]
-        const point = world.clone().project(viewCamera)
+        const origin = bounds.getCenter(new THREE.Vector3())
+        origin[face.axis] = face.side === 0 ? bounds.min[face.axis] : bounds.max[face.axis]
+        const point = origin.clone().applyMatrix4(transform).project(viewCamera)
         const axis = projectSectionAxis(
           viewCamera,
-          world,
+          origin,
           face.axis,
           baseBounds.max[face.axis] - baseBounds.min[face.axis],
           width,
           height,
+          transform,
         )
         const sign = face.side === 0 ? -1 : 1
         const length = Math.hypot(axis.x, axis.y) || 1
@@ -121,7 +130,7 @@ export default function SectionBoxHandles({ baseBounds, bounds, settings, onChan
       layoutCache.current = { key, positions }
       return positions
     },
-    [baseBounds, bounds],
+    [baseBounds, bounds, transform],
   )
 
   const finish = useCallback((notify = true) => {
@@ -216,6 +225,7 @@ export default function SectionBoxHandles({ baseBounds, bounds, settings, onChan
         baseBounds.max[face.axis] - baseBounds.min[face.axis],
         size.width,
         size.height,
+        transform,
       ),
       controls: orbit,
       previousEnabled,
@@ -258,6 +268,7 @@ export default function SectionBoxHandles({ baseBounds, bounds, settings, onChan
           key={`${face.axis}-${face.side}`}
           face={face}
           bounds={bounds}
+          transform={transform}
           layout={layout}
           value={settings.ranges[face.axis][face.side]}
           active={activeFace === `${face.axis}-${face.side}`}
@@ -275,6 +286,7 @@ export default function SectionBoxHandles({ baseBounds, bounds, settings, onChan
 function FaceHandle({
   face,
   bounds,
+  transform,
   layout,
   value,
   active,
@@ -284,6 +296,7 @@ function FaceHandle({
 }: {
   face: Face
   bounds: THREE.Box3
+  transform: THREE.Matrix4
   layout: HandleLayout
   value: number
   active: boolean
@@ -301,7 +314,7 @@ function FaceHandle({
 
   return (
     <Html
-      position={origin.toArray()}
+      position={origin.clone().applyMatrix4(transform).toArray()}
       center
       zIndexRange={[30, 30]}
       style={{ pointerEvents: 'none' }}

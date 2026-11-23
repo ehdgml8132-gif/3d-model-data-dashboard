@@ -69,6 +69,7 @@ function container(value: unknown, body = originalBytes, encoded?: Uint8Array): 
 describe('portable project binary format', () => {
   it('round trips original IFC bytes, Korean metadata, leading-zero IDs and the full workspace', async () => {
     const original = project()
+    original.snapshot.workspace.sectionBox!.rotationY = -37
     const blob = await encodeProjectFile(original)
     expect(blob.type).toBe(PROJECT_FILE_MIME)
     const header = new Uint8Array(await blob.slice(0, 12).arrayBuffer())

@@ -25,8 +25,8 @@ function visibleSegment(a: EndPoint, b: EndPoint): [EndPoint, EndPoint] | undefi
 }
 
 /** Pick the actual box edges with a CSS-pixel tolerance, independent of model
- * units and zoom. Bounds already use viewer world coordinates: Box3Helper's own
- * position/scale must not be applied a second time.
+ * units and zoom. Bounds use the viewer's unrotated coordinates. Apply the
+ * section rotation alone because Box3Helper already accounts for size and position.
  */
 export function createSectionBoxRaycast(
   bounds: THREE.Box3,
@@ -34,16 +34,16 @@ export function createSectionBoxRaycast(
   width: number,
   height: number,
   tolerance = 9,
+  transform?: THREE.Matrix4,
 ): THREE.LineSegments['raycast'] {
-  const corners = Array.from(
-    { length: 8 },
-    (_, index) =>
-      new THREE.Vector3(
-        index & 1 ? bounds.max.x : bounds.min.x,
-        index & 2 ? bounds.max.y : bounds.min.y,
-        index & 4 ? bounds.max.z : bounds.min.z,
-      ),
-  )
+  const corners = Array.from({ length: 8 }, (_, index) => {
+    const corner = new THREE.Vector3(
+      index & 1 ? bounds.max.x : bounds.min.x,
+      index & 2 ? bounds.max.y : bounds.min.y,
+      index & 4 ? bounds.max.z : bounds.min.z,
+    )
+    return transform ? corner.applyMatrix4(transform) : corner
+  })
   const edges = corners.flatMap((_, index) =>
     [1, 2, 4].filter((bit) => !(index & bit)).map((bit) => [index, index | bit]),
   )
