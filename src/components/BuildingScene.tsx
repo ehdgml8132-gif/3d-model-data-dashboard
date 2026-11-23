@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Edges, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { BUILDING_ELEMENTS, type BuildingElement, type FloorFilter } from '../data/building'
@@ -142,6 +142,22 @@ function SiteTree({ position, size = 1 }: { position: [number, number, number]; 
   )
 }
 
+function SamplePlatform() {
+  const platform = useRef<THREE.Mesh>(null)
+  const direction = useMemo(() => new THREE.Vector3(), [])
+  useFrame(({ camera }) => {
+    // Keep the sample ground above and at the horizon, but reveal the structural underside.
+    if (platform.current) platform.current.visible = camera.getWorldDirection(direction).y <= 1e-5
+  })
+
+  return (
+    <mesh ref={platform} position={[0, -0.15, 0]} receiveShadow>
+      <boxGeometry args={[10.8, 0.25, 8.8]} />
+      <meshStandardMaterial color="#e3e4d9" roughness={0.95} />
+    </mesh>
+  )
+}
+
 function FrameCamera({ floor, resetKey }: { floor: FloorFilter; resetKey: number }) {
   const { camera, controls, size } = useThree()
   useEffect(() => {
@@ -185,6 +201,7 @@ export default function BuildingScene({
   onSectionBoxSelect,
   onSectionBoxDeselect,
   directionControl,
+  orientationControl,
   onDirectionChange,
 }: Props) {
   const visible = filterBuildingElements(elements, floor)
@@ -237,10 +254,7 @@ export default function BuildingScene({
         shadow-normalBias={0.035}
       />
       <group position={[0, base, 0]}>
-        <mesh position={[0, -0.15, 0]} receiveShadow>
-          <boxGeometry args={[10.8, 0.25, 8.8]} />
-          <meshStandardMaterial color="#e3e4d9" roughness={0.95} />
-        </mesh>
+        <SamplePlatform />
         <gridHelper args={[12, 12, '#ced7cb', '#dde3d8']} position={[0, -0.005, 0]} />
         {floor === 'all' && (
           <>
@@ -290,7 +304,7 @@ export default function BuildingScene({
         minZoom={13}
         maxZoom={100}
         minPolarAngle={0}
-        maxPolarAngle={Math.PI / 2}
+        maxPolarAngle={Math.PI}
       />
       {sectionBase ? (
         <FrameBoxCamera bounds={sectionBase} resetKey={resetKey} />
@@ -299,6 +313,7 @@ export default function BuildingScene({
       )}
       <ViewerDirectionCamera
         directionControl={directionControl}
+        orientationControl={orientationControl}
         onDirectionChange={onDirectionChange}
       />
       <SectionBoxVisual

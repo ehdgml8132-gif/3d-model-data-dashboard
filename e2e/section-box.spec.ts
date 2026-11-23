@@ -22,15 +22,17 @@ const graphData = (page: Page) =>
 
 const cameraDirections = {
   정면: { id: 'front', vector: [0, 0, 1] },
-  윗면: { id: 'top', vector: [0, 1, 0] },
   오른쪽: { id: 'right', vector: [1, 0, 0] },
+  윗면: { id: 'top', vector: [0, 1, 0] },
+  배면: { id: 'back', vector: [0, 0, -1] },
+  좌측면: { id: 'left', vector: [-1, 0, 0] },
+  아랫면: { id: 'bottom', vector: [0, -1, 0] },
 }
 
-async function chooseCameraView(page: Page, canvas: Locator, view: keyof typeof cameraDirections) {
+async function expectCameraView(page: Page, canvas: Locator, view: keyof typeof cameraDirections) {
   const cube = viewCube(page)
   const button = cube.getByRole('button', { name: view, exact: true })
   const expected = cameraDirections[view]
-  await button.click()
   await expect(button).toHaveAttribute('aria-pressed', 'true')
   await expect(cube.getByRole('button', { pressed: true })).toHaveCount(1)
   await expect(canvas).toHaveAttribute('data-view-direction', expected.id)
@@ -42,6 +44,11 @@ async function chooseCameraView(page: Page, canvas: Locator, view: keyof typeof 
       return Math.hypot(...expected.vector.map((value, index) => direction[index] - value))
     })
     .toBeLessThanOrEqual(1e-5)
+}
+
+async function chooseCameraView(page: Page, canvas: Locator, view: keyof typeof cameraDirections) {
+  await viewCube(page).getByRole('button', { name: view, exact: true }).click()
+  await expectCameraView(page, canvas, view)
 }
 
 async function openRotationEditor(page: Page) {
@@ -248,7 +255,10 @@ test('box visibility, selection and clipping remain independent across floor and
   await selectBox(page, base)
   await expect(rotation).toBeVisible()
   await expect(rotationChip).toHaveText('회전 -37.5°')
-  for (const view of ['정면', '윗면', '오른쪽'] as const) await chooseCameraView(page, canvas, view)
+  for (const view of ['정면', '윗면', '오른쪽'] as const) {
+    await page.getByRole('button', { name: '3D 건물 시점 초기화', exact: true }).click()
+    await chooseCameraView(page, canvas, view)
+  }
   await expect(canvas).toHaveAttribute('data-section-rotation-y', '-37.5')
   await expect(rotationChip).toHaveText('회전 -37.5°')
   expect(await boundsOf(canvas)).toEqual(clipped)
@@ -382,7 +392,10 @@ test('IFC box selection uses placed geometry and resets after restoring the samp
       opacityBounds.y + opacityBounds.height <= cubeBounds.y,
   ).toBe(true)
   await chooseCameraView(page, canvas, '윗면')
+  await page.getByRole('button', { name: '3D 건물 시점 초기화', exact: true }).click()
   await chooseCameraView(page, canvas, '오른쪽')
+  await page.getByRole('combobox', { name: '모든 뷰 방향' }).selectOption('bottom')
+  await expectCameraView(page, canvas, '아랫면')
   await expect(canvas).toHaveAttribute('data-section-rotation-y', '28')
   await expect(rotationChip).toHaveText('회전 28°')
   await expect(transparency).toHaveValue('35')
@@ -414,6 +427,49 @@ test('graphs and the unselected section box fit a mobile viewport', async ({ pag
     true,
   )
   await page.screenshot({ path: '/tmp/revit-section-mobile-outline.png', fullPage: true })
+})
+
+test('the view cube follows manual orbit and selects the back, left and bottom views', async ({
+  page,
+}) => {
+  await openBuilding(page)
+  const canvas = page.getByLabel('건물 모델 3D 뷰어', { exact: true })
+  const cube = viewCube(page)
+  const body = cube.locator('.viewer-cube-body')
+  await chooseCameraView(page, canvas, '정면')
+  await expect(body).toHaveCSS('transform', /^matrix3d\(/)
+  const frontTransform = await body.evaluate((element) => getComputedStyle(element).transform)
+
+  await canvas.scrollIntoViewIfNeeded()
+  const bounds = (await canvas.boundingBox())!
+  const x = bounds.x + bounds.width * 0.3
+  const y = bounds.y + bounds.height * 0.6
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  try {
+    await page.mouse.move(x + bounds.height * 0.375, y - bounds.height / 12, { steps: 8 })
+  } finally {
+    await page.mouse.up()
+  }
+  await expect
+    .poll(async () => {
+      const data = await canvas.getAttribute('data-camera-direction')
+      if (!data) return false
+      return (JSON.parse(data) as number[]).every((coordinate) => coordinate < -0.25)
+    })
+    .toBe(true)
+  await expect(body).not.toHaveCSS('transform', frontTransform)
+  await expect(cube.getByRole('button', { pressed: true })).toHaveCount(0)
+  for (const name of ['배면', '좌측면', '아랫면']) {
+    await expect(cube.getByRole('button', { name, exact: true })).toBeEnabled()
+  }
+  await chooseCameraView(page, canvas, '배면')
+
+  const allViews = page.getByRole('combobox', { name: '모든 뷰 방향', exact: true })
+  for (const view of ['좌측면', '아랫면'] as const) {
+    await allViews.selectOption(cameraDirections[view].id)
+    await expectCameraView(page, canvas, view)
+  }
 })
 
 test('donut tooltip follows the hovered slice without covering the ring or total', async ({

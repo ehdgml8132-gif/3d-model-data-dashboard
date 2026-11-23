@@ -211,6 +211,7 @@ const ModelContents = memo(function ModelContents({
   onCameraChange,
   cameraCapture,
   directionControl,
+  orientationControl,
   onDirectionChange,
 }: Props) {
   const opacityMultiplier = 1 - transparency / 100
@@ -313,6 +314,7 @@ const ModelContents = memo(function ModelContents({
       )}
       <ViewerDirectionCamera
         directionControl={directionControl}
+        orientationControl={orientationControl}
         onDirectionChange={onDirectionChange}
       />
     </>
@@ -367,7 +369,7 @@ export default function IfcScene(props: Props) {
         enablePan
         enableDamping={false}
         minPolarAngle={0}
-        maxPolarAngle={Math.PI * 0.98}
+        maxPolarAngle={Math.PI}
         onChange={handleViewChange}
       />
       <ModelContents {...props} />

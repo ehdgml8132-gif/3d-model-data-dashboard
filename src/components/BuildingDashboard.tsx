@@ -43,7 +43,7 @@ import BuildingAnalytics, { BuildingAnalyticsNote } from './BuildingAnalytics'
 import BuildingMetricFilter from './BuildingMetricFilter'
 import ProjectManager from './ProjectManager'
 import ViewerCube from './ViewerCube'
-import type { ViewerDirection } from './ViewerDirectionCamera'
+import type { ViewerCubeOrientationHandler, ViewerDirection } from './ViewerDirectionCamera'
 import { joinBusinessRows } from '../lib/business'
 import { buildProjectRecord, summarizeProject, writeProject } from '../projects/storage'
 import { embeddedProjectToOpen, finishEmbeddedProject } from '../projects/standalone'
@@ -200,6 +200,7 @@ export default function BuildingDashboard() {
   const cameraGeneration = useRef(0)
   const cameraCapture = useRef<(() => ProjectCamera) | null>(null)
   const directionControl = useRef<((direction: ViewerDirection) => void) | null>(null)
+  const orientationControl = useRef<ViewerCubeOrientationHandler | null>(null)
   const [viewerDirection, setViewerDirection] = useState<ViewerDirection | null>(null)
   const restoredTablePage = useRef<number | null>(null)
   const reportCamera = useCallback(
@@ -994,6 +995,7 @@ export default function BuildingDashboard() {
                       {visible.length > 0 && (
                         <ViewerCube
                           direction={viewerDirection}
+                          orientationControl={orientationControl}
                           onSelect={(direction) => directionControl.current?.(direction)}
                         />
                       )}
@@ -1044,6 +1046,7 @@ export default function BuildingDashboard() {
                               onCameraChange={reportCamera}
                               cameraCapture={cameraCapture}
                               directionControl={directionControl}
+                              orientationControl={orientationControl}
                               onDirectionChange={setViewerDirection}
                             />
                           ) : (
@@ -1059,6 +1062,7 @@ export default function BuildingDashboard() {
                               onSectionBoxSelect={() => setSectionBoxSelected(true)}
                               onSectionBoxDeselect={clearSelection}
                               directionControl={directionControl}
+                              orientationControl={orientationControl}
                               onDirectionChange={setViewerDirection}
                             />
                           )}
