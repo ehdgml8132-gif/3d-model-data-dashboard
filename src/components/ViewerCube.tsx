@@ -4,7 +4,7 @@ import './viewer-cube.css'
 
 const faces = [
   { direction: 'front', name: '정면', label: '정면', axis: 'z', sign: 1 },
-  { direction: 'top', name: '윗면', label: '윗면', axis: 'y', sign: 1 },
+  { direction: 'top', name: '평면', label: '평면', axis: 'y', sign: 1 },
   { direction: 'right', name: '오른쪽', label: '우측', axis: 'x', sign: 1 },
   { direction: 'back', name: '배면', label: '배면', axis: 'z', sign: -1 },
   { direction: 'left', name: '좌측면', label: '좌측', axis: 'x', sign: -1 },

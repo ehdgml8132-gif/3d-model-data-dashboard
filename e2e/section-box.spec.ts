@@ -23,7 +23,7 @@ const graphData = (page: Page) =>
 const cameraDirections = {
   정면: { id: 'front', vector: [0, 0, 1] },
   오른쪽: { id: 'right', vector: [1, 0, 0] },
-  윗면: { id: 'top', vector: [0, 1, 0] },
+  평면: { id: 'top', vector: [0, 1, 0] },
   배면: { id: 'back', vector: [0, 0, -1] },
   좌측면: { id: 'left', vector: [-1, 0, 0] },
   아랫면: { id: 'bottom', vector: [0, -1, 0] },
@@ -255,7 +255,7 @@ test('box visibility, selection and clipping remain independent across floor and
   await selectBox(page, base)
   await expect(rotation).toBeVisible()
   await expect(rotationChip).toHaveText('회전 -37.5°')
-  for (const view of ['정면', '윗면', '오른쪽'] as const) {
+  for (const view of ['정면', '평면', '오른쪽'] as const) {
     await page.getByRole('button', { name: '3D 건물 시점 초기화', exact: true }).click()
     await chooseCameraView(page, canvas, view)
   }
@@ -391,7 +391,7 @@ test('IFC box selection uses placed geometry and resets after restoring the samp
       cubeBounds.y + cubeBounds.height <= opacityBounds.y ||
       opacityBounds.y + opacityBounds.height <= cubeBounds.y,
   ).toBe(true)
-  await chooseCameraView(page, canvas, '윗면')
+  await chooseCameraView(page, canvas, '평면')
   await page.getByRole('button', { name: '3D 건물 시점 초기화', exact: true }).click()
   await chooseCameraView(page, canvas, '오른쪽')
   await page.getByRole('combobox', { name: '모든 뷰 방향' }).selectOption('bottom')
@@ -466,6 +466,10 @@ test('the view cube follows manual orbit and selects the back, left and bottom v
   await chooseCameraView(page, canvas, '배면')
 
   const allViews = page.getByRole('combobox', { name: '모든 뷰 방향', exact: true })
+  await expect(allViews.getByRole('option', { name: '평면', exact: true })).toHaveAttribute(
+    'value',
+    'top',
+  )
   for (const view of ['좌측면', '아랫면'] as const) {
     await allViews.selectOption(cameraDirections[view].id)
     await expectCameraView(page, canvas, view)
