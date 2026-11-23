@@ -42,6 +42,9 @@ import BusinessDataPanel, { type BusinessConnection } from './BusinessDataPanel'
 import BuildingAnalytics, { BuildingAnalyticsNote } from './BuildingAnalytics'
 import BuildingMetricFilter from './BuildingMetricFilter'
 import ProjectManager from './ProjectManager'
+import ViewerCube from './ViewerCube'
+import type { ViewerDirection } from './ViewerDirectionCamera'
+import SectionRotationInput from './SectionRotationInput'
 import { joinBusinessRows } from '../lib/business'
 import { buildProjectRecord, summarizeProject, writeProject } from '../projects/storage'
 import { embeddedProjectToOpen, finishEmbeddedProject } from '../projects/standalone'
@@ -197,6 +200,8 @@ export default function BuildingDashboard() {
   const importToken = useRef(0)
   const cameraGeneration = useRef(0)
   const cameraCapture = useRef<(() => ProjectCamera) | null>(null)
+  const directionControl = useRef<((direction: ViewerDirection) => void) | null>(null)
+  const [viewerDirection, setViewerDirection] = useState<ViewerDirection | null>(null)
   const restoredTablePage = useRef<number | null>(null)
   const reportCamera = useCallback(
     (pose: ProjectCamera) => {
@@ -255,7 +260,13 @@ export default function BuildingDashboard() {
   useEffect(() => setSectionBoxSelected(false), [activeView, metricFilters])
   useEffect(() => {
     const deselect = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !document.querySelector('dialog[open]')) clearSelection()
+      if (event.key !== 'Escape' || document.querySelector('dialog[open]')) return
+      if (
+        event.target instanceof HTMLInputElement &&
+        event.target.hasAttribute('data-section-rotation-input')
+      )
+        return
+      clearSelection()
     }
     window.addEventListener('keydown', deselect, true)
     return () => window.removeEventListener('keydown', deselect, true)
@@ -953,18 +964,26 @@ export default function BuildingDashboard() {
                         <RotateCcw size={16} />
                       </button>
                       {sectionBoxSelected && sectionBox && (
-                        <button
-                          type="button"
-                          className="icon-button reset-view"
-                          title="단면 회전 초기화"
-                          aria-label="단면 회전 초기화"
-                          disabled={!(sectionBox.rotationY ?? 0)}
-                          onClick={() =>
-                            setSectionBox((current) => current && { ...current, rotationY: 0 })
-                          }
-                        >
-                          <RotateCcw size={14} />
-                        </button>
+                        <div className="section-rotation-control">
+                          <SectionRotationInput
+                            angle={sectionBox.rotationY ?? 0}
+                            onChange={(rotationY) =>
+                              setSectionBox((current) => current && { ...current, rotationY })
+                            }
+                          />
+                          <button
+                            type="button"
+                            className="icon-button reset-view"
+                            title="단면 회전 초기화"
+                            aria-label="단면 회전 초기화"
+                            disabled={!(sectionBox.rotationY ?? 0)}
+                            onClick={() =>
+                              setSectionBox((current) => current && { ...current, rotationY: 0 })
+                            }
+                          >
+                            <RotateCcw size={14} />
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -980,24 +999,32 @@ export default function BuildingDashboard() {
                             : `${metricFilters.floors.length}개 층`}
                       </span>
                     </div>
-                    {ifcModel && (
-                      <label className="ifc-transparency-control">
-                        <span>투명도</span>
-                        <input
-                          type="range"
-                          min={0}
-                          max={100}
-                          step={5}
-                          value={ifcTransparency}
-                          aria-label="투명도"
-                          aria-valuetext={`${ifcTransparency}%`}
-                          onChange={(event) =>
-                            setIfcTransparency(event.currentTarget.valueAsNumber)
-                          }
+                    <div className="building-view-controls">
+                      {visible.length > 0 && (
+                        <ViewerCube
+                          direction={viewerDirection}
+                          onSelect={(direction) => directionControl.current?.(direction)}
                         />
-                        <span aria-hidden="true">{ifcTransparency}%</span>
-                      </label>
-                    )}
+                      )}
+                      {ifcModel && (
+                        <label className="ifc-transparency-control">
+                          <span>투명도</span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            step={5}
+                            value={ifcTransparency}
+                            aria-label="투명도"
+                            aria-valuetext={`${ifcTransparency}%`}
+                            onChange={(event) =>
+                              setIfcTransparency(event.currentTarget.valueAsNumber)
+                            }
+                          />
+                          <span aria-hidden="true">{ifcTransparency}%</span>
+                        </label>
+                      )}
+                    </div>
                     {visible.length ? (
                       <BuildingSceneBoundary key={modelVersion}>
                         <Suspense
@@ -1025,6 +1052,8 @@ export default function BuildingDashboard() {
                               cameraRestoreKey={cameraRestoreKey}
                               onCameraChange={reportCamera}
                               cameraCapture={cameraCapture}
+                              directionControl={directionControl}
+                              onDirectionChange={setViewerDirection}
                             />
                           ) : (
                             <BuildingScene
@@ -1038,6 +1067,8 @@ export default function BuildingDashboard() {
                               sectionBoxSelected={sectionBoxSelected}
                               onSectionBoxSelect={() => setSectionBoxSelected(true)}
                               onSectionBoxDeselect={clearSelection}
+                              directionControl={directionControl}
+                              onDirectionChange={setViewerDirection}
                             />
                           )}
                         </Suspense>

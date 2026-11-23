@@ -1,0 +1,29 @@
+.section-rotation-control,
+.section-rotation-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.section-rotation-input {
+  color: #48694b;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.section-rotation-input input {
+  width: 56px;
+  min-height: 30px;
+  padding: 3px 5px;
+  border: 1px solid #d6e2cf;
+  border-radius: 6px;
+  background: #f8faf6;
+  color: inherit;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.section-rotation-input input:focus:invalid {
+  border-color: #b66a57;
+}

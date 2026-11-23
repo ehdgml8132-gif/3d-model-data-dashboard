@@ -12,8 +12,35 @@ const handle = (page: Page, axis: string, side: '최소' | '최대') =>
   page.getByRole('button', { name: `${axis} ${side} 단면 이동`, exact: true })
 const rotationGrip = (page: Page) =>
   page.getByRole('button', { name: '단면상자 수평 회전', exact: true })
+const rotationInput = (page: Page) =>
+  page.getByRole('spinbutton', { name: '단면상자 회전 각도', exact: true })
+const viewCube = (page: Page) => page.getByRole('group', { name: '뷰 방향', exact: true })
 const graphData = (page: Page) =>
   page.getByRole('table', { name: '층별 그래프 데이터', exact: true })
+
+const cameraDirections = {
+  정면: { id: 'front', vector: [0, 0, 1] },
+  윗면: { id: 'top', vector: [0, 1, 0] },
+  오른쪽: { id: 'right', vector: [1, 0, 0] },
+}
+
+async function chooseCameraView(page: Page, canvas: Locator, view: keyof typeof cameraDirections) {
+  const cube = viewCube(page)
+  const button = cube.getByRole('button', { name: view, exact: true })
+  const expected = cameraDirections[view]
+  await button.click()
+  await expect(button).toHaveAttribute('aria-pressed', 'true')
+  await expect(cube.getByRole('button', { pressed: true })).toHaveCount(1)
+  await expect(canvas).toHaveAttribute('data-view-direction', expected.id)
+  await expect
+    .poll(async () => {
+      const data = await canvas.getAttribute('data-camera-direction')
+      if (!data) return Infinity
+      const direction = JSON.parse(data) as number[]
+      return Math.hypot(...expected.vector.map((value, index) => direction[index] - value))
+    })
+    .toBeLessThanOrEqual(1e-5)
+}
 
 async function openBuilding(page: Page) {
   await page.goto('/')
@@ -46,6 +73,7 @@ async function enableSection(page: Page) {
   await expect(page.locator('canvas')).toHaveAttribute('data-section-selected', 'false')
   await expect(page.locator('.section-face-handle')).toHaveCount(0)
   await expect(rotationGrip(page)).toHaveCount(0)
+  await expect(rotationInput(page)).toHaveCount(0)
   await expect(page.getByRole('slider', { name: /^(?!투명도$)/ })).toHaveCount(0)
   await expect(page.getByRole('region', { name: '단면상자 범위', exact: true })).toHaveCount(0)
   return boundsOf(page.locator('canvas'))
@@ -146,7 +174,11 @@ test('box visibility, selection and clipping remain independent across floor and
   await selectBox(page, base)
   const canvas = page.locator('canvas')
   const rotation = rotationGrip(page)
+  const angle = rotationInput(page)
   await expect(rotation).toBeVisible()
+  await expect(angle).toHaveValue('0')
+  await expect(angle).toHaveAttribute('min', '-180')
+  await expect(angle).toHaveAttribute('max', '180')
   await expect(page.getByRole('slider')).toHaveCount(0)
   await expect(canvas).toHaveAttribute('data-section-rotation-y', '0')
   await rotation.press('ArrowRight')
@@ -156,6 +188,16 @@ test('box visibility, selection and clipping remain independent across floor and
   for (let step = 0; step < 3; step++) await rotation.press('Shift+ArrowRight')
   await expect(canvas).toHaveAttribute('data-section-rotation-y', '45')
   await expect(rotation).toHaveAttribute('aria-description', /^현재 45도\./)
+  await expect(angle).toHaveValue('45')
+  await angle.fill('-37.5')
+  await expect(canvas).toHaveAttribute('data-section-rotation-y', '45')
+  await angle.press('Enter')
+  await expect(canvas).toHaveAttribute('data-section-rotation-y', '-37.5')
+  await expect(rotation).toHaveAttribute('aria-description', /^현재 -37\.5도\./)
+  await angle.fill('181')
+  await angle.press('Enter')
+  await expect(angle).toHaveValue('-37.5')
+  await expect(canvas).toHaveAttribute('data-section-rotation-y', '-37.5')
   expect(await boundsOf(canvas)).toEqual(base)
   await expect(members(page).locator('tbody tr')).toHaveCount(72)
   await expect(page.getByRole('region', { name: '건물 집계 지표' })).toContainText('64.53 m³')
@@ -165,13 +207,19 @@ test('box visibility, selection and clipping remain independent across floor and
   await page.keyboard.press('Escape')
   await expect(page.locator('.section-face-handle')).toHaveCount(0)
   await expect(rotation).toHaveCount(0)
-  await expect(canvas).toHaveAttribute('data-section-rotation-y', '45')
+  await expect(angle).toHaveCount(0)
+  await expect(canvas).toHaveAttribute('data-section-rotation-y', '-37.5')
   expect(await boundsOf(page.locator('canvas'))).toEqual(clipped)
   await selectBox(page, base)
   await expect(rotation).toBeVisible()
-  await expect(canvas).toHaveAttribute('data-section-rotation-y', '45')
+  await expect(angle).toHaveValue('-37.5')
+  for (const view of ['정면', '윗면', '오른쪽'] as const) await chooseCameraView(page, canvas, view)
+  await expect(canvas).toHaveAttribute('data-section-rotation-y', '-37.5')
+  await expect(angle).toHaveValue('-37.5')
+  expect(await boundsOf(canvas)).toEqual(clipped)
   await page.getByRole('button', { name: '단면 회전 초기화', exact: true }).click()
   await expect(canvas).toHaveAttribute('data-section-rotation-y', '0')
+  await expect(angle).toHaveValue('0')
   expect(await boundsOf(canvas)).toEqual(clipped)
   await page.locator('canvas').click({ position: { x: 12, y: 12 } })
   await expect(page.locator('.section-face-handle')).toHaveCount(0)
@@ -273,6 +321,32 @@ test('IFC box selection uses placed geometry and resets after restoring the samp
   await expectNoObjectSelection(page)
   await expect(page.getByRole('button', { name: '선택 해제', exact: true })).toBeDisabled()
   expect(await boundsOf(page.locator('canvas'))).toEqual(clipped)
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  const canvas = page.getByLabel('IFC 모델 3D 뷰어', { exact: true })
+  await canvas.press('Enter')
+  const angle = rotationInput(page)
+  await angle.fill('28')
+  await angle.press('Enter')
+  await expect(canvas).toHaveAttribute('data-section-rotation-y', '28')
+  const transparency = page.getByRole('slider', { name: '투명도', exact: true })
+  await transparency.fill('35')
+  await expect(transparency).toHaveValue('35')
+  const opacityBounds = (await transparency.locator('..').boundingBox())!
+  const cubeBounds = (await viewCube(page).boundingBox())!
+  expect(
+    cubeBounds.x + cubeBounds.width <= opacityBounds.x ||
+      opacityBounds.x + opacityBounds.width <= cubeBounds.x ||
+      cubeBounds.y + cubeBounds.height <= opacityBounds.y ||
+      opacityBounds.y + opacityBounds.height <= cubeBounds.y,
+  ).toBe(true)
+  await chooseCameraView(page, canvas, '윗면')
+  await chooseCameraView(page, canvas, '오른쪽')
+  await expect(canvas).toHaveAttribute('data-section-rotation-y', '28')
+  await expect(angle).toHaveValue('28')
+  await expect(transparency).toHaveValue('35')
+  expect(await boundsOf(canvas)).toEqual(clipped)
+
   await page.getByRole('button', { name: '샘플로 돌아가기', exact: true }).click()
   await expect(page.getByRole('checkbox', { name: '단면상자', exact: true })).not.toBeChecked()
   await expect(members(page).locator('tbody tr')).toHaveCount(72)

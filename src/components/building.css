@@ -663,6 +663,7 @@
   margin: 0 13px;
   border-radius: 8px;
   overflow: hidden;
+  container-type: inline-size;
 }
 .building-scene-wrap > div:has(canvas) {
   position: absolute !important;
@@ -671,16 +672,23 @@
 .building-scene-wrap .scene-hint {
   bottom: 15px;
 }
-.ifc-transparency-control {
+.building-view-controls {
   position: absolute;
   top: 10px;
   right: 10px;
-  z-index: 31;
+  z-index: 32;
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: flex-start;
+  gap: 7px;
+  pointer-events: none;
+}
+.ifc-transparency-control {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) 4ch;
   align-items: center;
   gap: 6px;
-  width: min(178px, 48%);
+  width: min(178px, 48cqi);
   min-height: 30px;
   padding: 4px 8px;
   border: 1px solid #dce7d4;
@@ -689,6 +697,7 @@
   color: #365943;
   font-size: 10px;
   white-space: nowrap;
+  pointer-events: auto;
 }
 .ifc-transparency-control input {
   width: 100%;
@@ -701,6 +710,13 @@
 .ifc-transparency-control > span:last-child {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+@container (max-width: 400px) {
+  .building-view-controls {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
+  }
 }
 .building-legend {
   display: flex;

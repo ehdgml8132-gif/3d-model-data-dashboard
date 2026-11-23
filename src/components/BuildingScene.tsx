@@ -14,8 +14,9 @@ import {
 } from '../lib/sectionBox'
 import { FrameBoxCamera, SectionBoxVisual } from './SectionBox'
 import SectionBoxHandles from './SectionBoxHandles'
+import ViewerDirectionCamera, { type ViewerDirectionProps } from './ViewerDirectionCamera'
 
-type Props = {
+type Props = ViewerDirectionProps & {
   elements: BuildingElement[]
   selectedId: string
   onSelect: (id: string) => void
@@ -183,6 +184,8 @@ export default function BuildingScene({
   sectionBoxSelected,
   onSectionBoxSelect,
   onSectionBoxDeselect,
+  directionControl,
+  onDirectionChange,
 }: Props) {
   const visible = filterBuildingElements(elements, floor)
   const base = floor === 'all' ? 0 : (Number.parseInt(floor) - 1) * 3.2
@@ -286,14 +289,18 @@ export default function BuildingScene({
         enablePan={Boolean(sectionBox)}
         minZoom={13}
         maxZoom={100}
-        minPolarAngle={Math.PI / 6}
-        maxPolarAngle={Math.PI / 2.2}
+        minPolarAngle={0}
+        maxPolarAngle={Math.PI / 2}
       />
       {sectionBase ? (
         <FrameBoxCamera bounds={sectionBase} resetKey={resetKey} />
       ) : (
         <FrameCamera floor={floor} resetKey={resetKey} />
       )}
+      <ViewerDirectionCamera
+        directionControl={directionControl}
+        onDirectionChange={onDirectionChange}
+      />
       <SectionBoxVisual
         bounds={clipBounds}
         transform={transform}

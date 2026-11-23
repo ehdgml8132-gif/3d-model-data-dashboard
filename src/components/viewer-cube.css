@@ -1,0 +1,61 @@
+.viewer-cube {
+  position: relative;
+  flex: 0 0 auto;
+  width: 72px;
+  height: 64px;
+  filter: drop-shadow(0 2px 3px #203e343b);
+}
+
+.viewer-cube-face {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #284b3a;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+.viewer-cube-face[data-direction='top'] {
+  inset: 3px 3px auto;
+  height: 32px;
+  background: #f6fbf3;
+  clip-path: polygon(0 46%, 39% 0, 100% 46%, 61% 100%);
+}
+
+.viewer-cube-face[data-direction='front'] {
+  top: 19px;
+  left: 3px;
+  width: 39px;
+  height: 42px;
+  background: #dfebda;
+  clip-path: polygon(0 0, 100% 38%, 100% 100%, 0 62%);
+}
+
+.viewer-cube-face[data-direction='right'] {
+  top: 19px;
+  right: 3px;
+  width: 25px;
+  height: 42px;
+  background: #bccfbd;
+  clip-path: polygon(0 38%, 100% 0, 100% 62%, 0 100%);
+  font-size: 9px;
+}
+
+.viewer-cube .viewer-cube-face:hover,
+.viewer-cube .viewer-cube-face:focus-visible {
+  background: #a9c5a8;
+  color: #153c2a;
+}
+
+.viewer-cube .viewer-cube-face[aria-pressed='true'] {
+  background: #3c7860;
+  color: #fff;
+}
+
+.viewer-cube .viewer-cube-face[aria-pressed='true']:focus-visible {
+  background: #24553f;
+}

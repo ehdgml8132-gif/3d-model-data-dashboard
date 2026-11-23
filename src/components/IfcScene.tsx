@@ -23,9 +23,10 @@ import {
 import { FrameBoxCamera, SectionBoxVisual } from './SectionBox'
 import SectionBoxHandles from './SectionBoxHandles'
 import ProjectCameraSync from './ProjectCameraSync'
+import ViewerDirectionCamera, { type ViewerDirectionProps } from './ViewerDirectionCamera'
 import type { ProjectCamera } from '../projects/types'
 
-type Props = {
+type Props = ViewerDirectionProps & {
   model: IfcModel
   transparency: number
   visibleIds: string[]
@@ -209,6 +210,8 @@ const ModelContents = memo(function ModelContents({
   cameraRestoreKey,
   onCameraChange,
   cameraCapture,
+  directionControl,
+  onDirectionChange,
 }: Props) {
   const opacityMultiplier = 1 - transparency / 100
   const prepared = useMemo(() => prepareModel(model), [model])
@@ -308,6 +311,10 @@ const ModelContents = memo(function ModelContents({
           captureRef={cameraCapture}
         />
       )}
+      <ViewerDirectionCamera
+        directionControl={directionControl}
+        onDirectionChange={onDirectionChange}
+      />
     </>
   )
 })
@@ -359,7 +366,7 @@ export default function IfcScene(props: Props) {
         makeDefault
         enablePan
         enableDamping={false}
-        minPolarAngle={0.02}
+        minPolarAngle={0}
         maxPolarAngle={Math.PI * 0.98}
         onChange={handleViewChange}
       />
