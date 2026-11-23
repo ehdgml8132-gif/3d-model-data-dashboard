@@ -4,6 +4,9 @@
   height: 38px;
   pointer-events: none;
 }
+.section-rotation-position {
+  --section-axis-color: #595394;
+}
 .section-face-connector {
   position: absolute;
   left: 50%;
@@ -14,7 +17,7 @@
   opacity: 0.45;
   pointer-events: none;
 }
-.section-face-handle {
+:is(.section-face-handle, .section-rotation-handle) {
   position: relative;
   display: grid;
   place-items: center;
@@ -33,7 +36,7 @@
   -webkit-user-select: none;
   -webkit-tap-highlight-color: transparent;
 }
-.section-face-handle svg {
+:is(.section-face-handle, .section-rotation-handle) svg {
   width: 22px;
   height: 22px;
   fill: none;
@@ -43,18 +46,26 @@
   stroke-linejoin: round;
   pointer-events: none;
 }
-.section-face-handle:hover,
-.section-face-handle:focus-visible,
-.section-face-handle[data-dragging='true'] {
+.section-rotation-handle {
+  background: #f7f5ff;
+}
+:is(.section-face-handle, .section-rotation-handle):is(
+  :hover,
+  :focus-visible,
+  [data-dragging='true']
+) {
   background: var(--section-axis-color);
   color: #fff;
   box-shadow: 0 2px 11px #24473545;
 }
-.section-face-handle:focus-visible {
+:is(.section-face-handle, .section-rotation-handle):focus-visible {
   outline: 3px solid #fff;
   outline-offset: 2px;
 }
-.section-face-label {
+.section-rotation-handle:focus-visible {
+  outline-color: var(--section-axis-color);
+}
+:is(.section-face-label, .section-rotation-label) {
   position: absolute;
   top: calc(100% + 3px);
   left: 50%;
@@ -67,6 +78,13 @@
   line-height: 1.3;
   font-weight: 700;
   pointer-events: none;
+}
+.section-rotation-label {
+  padding: 2px 5px;
+  border: 1px solid #ded9ef;
+  background: #f7f5ff;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .section-face-value {
   display: none;
@@ -96,9 +114,19 @@ body.section-handle-dragging * {
     width: 42px;
     height: 42px;
   }
-  .section-face-handle {
+  :is(.section-face-handle, .section-rotation-handle) {
     width: 42px;
     height: 42px;
+    padding: 9px;
+  }
+}
+@media (max-width: 760px) {
+  .section-rotation-position,
+  .section-rotation-handle {
+    width: 42px;
+    height: 42px;
+  }
+  .section-rotation-handle {
     padding: 9px;
   }
 }

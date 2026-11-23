@@ -4,6 +4,7 @@ import type { SectionBoxSettings } from './sectionBox'
 export type SectionAxis = 'x' | 'y' | 'z'
 export type SectionDragProjection = { x: number; y: number; fallback: boolean }
 export type SectionHandlePoint = { id: string; x: number; y: number }
+type SectionViewport = { left: number; top: number; width: number; height: number }
 
 /** Keep screen-sized face handles apart, including when an axis is edge-on.
  * The final bounded search is only needed when repulsion pins a cluster against
@@ -156,6 +157,77 @@ export function dragSectionPercent(
     return start
   const next = start + (100 * (deltaX * projection.x + deltaY * projection.y)) / lengthSquared
   return Number.isFinite(next) ? next : start
+}
+
+/** Track angular changes in the box's horizontal plane using the camera at drag start. */
+export function projectSectionRotation(
+  camera: THREE.Camera,
+  pivot: THREE.Vector3,
+  { left, top, width, height }: SectionViewport,
+  startX: number,
+  startY: number,
+): (clientX: number, clientY: number) => number {
+  let delta = 0
+  const horizontalDrag = (clientX: number) => {
+    const next = clientX - startX
+    if (Number.isFinite(next)) delta = next
+    return delta
+  }
+  if (
+    !(camera instanceof THREE.OrthographicCamera || camera instanceof THREE.PerspectiveCamera) ||
+    ![left, top, width, height, pivot.x, pivot.y, pivot.z, startX, startY].every(Number.isFinite) ||
+    width <= 0 ||
+    height <= 0
+  )
+    return horizontalDrag
+
+  const view = camera.clone()
+  const projected = pivot.clone().project(view)
+  const centerX = left + ((projected.x + 1) * width) / 2
+  const centerY = top + ((1 - projected.y) * height) / 2
+  if (!Number.isFinite(centerX) || !Number.isFinite(centerY)) return horizontalDrag
+
+  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -pivot.y)
+  const { x: pivotX, z: pivotZ } = pivot
+  const raycaster = new THREE.Raycaster()
+  const pointer = new THREE.Vector2()
+  const hit = new THREE.Vector3()
+  const angleAt = (clientX: number, clientY: number) => {
+    if (
+      !Number.isFinite(clientX) ||
+      !Number.isFinite(clientY) ||
+      Math.hypot(clientX - centerX, clientY - centerY) < 10
+    )
+      return null
+    pointer.set(((clientX - left) * 2) / width - 1, 1 - ((clientY - top) * 2) / height)
+    raycaster.setFromCamera(pointer, view)
+    if (Math.abs(raycaster.ray.direction.y) < 0.12 || !raycaster.ray.intersectPlane(plane, hit))
+      return null
+    const dx = hit.x - pivotX
+    const dz = pivotZ - hit.z
+    return Number.isFinite(dx) && Number.isFinite(dz) ? Math.atan2(dz, dx) : null
+  }
+  const initial = angleAt(startX, startY)
+  if (initial === null || !Number.isFinite(initial)) return horizontalDrag
+
+  let previous = initial
+  return (clientX, clientY) => {
+    const angle = angleAt(clientX, clientY)
+    if (angle === null || !Number.isFinite(angle)) return delta
+    // Use the shortest signed step so crossing ±180° never reverses the drag.
+    const step = angle - previous
+    delta += THREE.MathUtils.radToDeg(Math.atan2(Math.sin(step), Math.cos(step)))
+    previous = angle
+    return delta
+  }
+}
+
+export function normalizeSectionRotation(angle: number): number {
+  if (!Number.isFinite(angle)) return 0
+  const rounded = Math.round(angle) % 360
+  if (rounded > 180) return rounded - 360
+  if (rounded < -180) return rounded + 360
+  return rounded || 0
 }
 
 /** Keep one-percent separation so neither drag nor keyboard input inverts a box. */

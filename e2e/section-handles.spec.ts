@@ -10,8 +10,8 @@ type Bounds = { min: number[]; max: number[] }
 
 const handle = (page: Page, axis: string, side: '최소' | '최대') =>
   page.getByRole('button', { name: `${axis} ${side} 단면 이동`, exact: true })
-const rotationSlider = (page: Page) =>
-  page.getByRole('slider', { name: '단면상자 수평 회전', exact: true })
+const rotationGrip = (page: Page) =>
+  page.getByRole('button', { name: '단면상자 수평 회전', exact: true })
 const details = (page: Page) => page.getByRole('article', { name: '선택한 부재 정보', exact: true })
 const members = (page: Page) => page.getByRole('article', { name: '부재 목록', exact: true })
 
@@ -29,9 +29,7 @@ async function boundsOf(page: Page): Promise<Bounds> {
   }
 }
 
-async function selectBox(page: Page, base: Bounds, touch = false) {
-  const canvas = page.locator('canvas')
-  const viewport = (await canvas.boundingBox())!
+function fitSectionCamera(base: Bounds, viewport: { width: number; height: number }) {
   const initial = new Box3(new Vector3().fromArray(base.min), new Vector3().fromArray(base.max))
   const camera = new OrthographicCamera(
     -viewport.width / 2,
@@ -57,6 +55,13 @@ async function selectBox(page: Page, base: Bounds, touch = false) {
     viewport.height / (Math.max(extent.y, diameter * 0.01) * 1.22),
   )
   camera.updateProjectionMatrix()
+  return { camera, center }
+}
+
+async function selectBox(page: Page, base: Bounds, touch = false) {
+  const canvas = page.locator('canvas')
+  const viewport = (await canvas.boundingBox())!
+  const { camera, center } = fitSectionCamera(base, viewport)
   const current = await boundsOf(page)
   const rotation = (Number(await canvas.getAttribute('data-section-rotation-y')) * Math.PI) / 180
   const up = new Vector3(0, 1, 0)
@@ -99,6 +104,7 @@ async function selectBox(page: Page, base: Bounds, touch = false) {
 async function enableSection(page: Page, touch = false) {
   await page.getByRole('checkbox', { name: '단면상자', exact: true }).check()
   await expect(page.locator('.section-face-handle')).toHaveCount(0)
+  await expect(rotationGrip(page)).toHaveCount(0)
   await expect(page.getByRole('slider', { name: /^(?!투명도$)/ })).toHaveCount(0)
   await expect(page.locator('canvas')).toHaveAttribute('data-section-selected', 'false')
   const base = await boundsOf(page)
@@ -143,6 +149,25 @@ async function dragInward(page: Page, button: Locator, pixels: number) {
   await page.mouse.up()
 }
 
+async function rotationGesture(page: Page, base: Bounds, pixels: number) {
+  const grip = rotationGrip(page)
+  await grip.scrollIntoViewIfNeeded()
+  const box = (await grip.boundingBox())!
+  const viewport = (await page.locator('canvas').boundingBox())!
+  const { camera, center } = fitSectionCamera(base, viewport)
+  const top = center.setY((await boundsOf(page)).max[1]).project(camera)
+  const x = box.x + box.width / 2
+  const y = box.y + box.height / 2
+  const dx = x - (viewport.x + ((top.x + 1) * viewport.width) / 2)
+  const dy = y - (viewport.y + ((1 - top.y) * viewport.height) / 2)
+  const radius = Math.hypot(dx, dy)
+  return { x, y, moveX: (-dy * pixels) / radius, moveY: (dx * pixels) / radius }
+}
+
+async function rotationAngle(page: Page) {
+  return Number(await page.locator('canvas').getAttribute('data-section-rotation-y'))
+}
+
 async function expectOrbitWorks(page: Page) {
   const canvas = page.locator('canvas')
   await canvas.scrollIntoViewIfNeeded()
@@ -181,13 +206,17 @@ async function expectSeparatedHandles(page: Page) {
     .poll(async () =>
       page.evaluate(() => {
         const canvas = document.querySelector('canvas')!.getBoundingClientRect()
-        const handles = [...document.querySelectorAll('.section-face-handle')].map((node) => ({
+        const handles = [
+          ...document.querySelectorAll('.section-face-handle, .section-rotation-handle'),
+        ].map((node) => ({
           name: node.getAttribute('aria-label'),
           button: node.getBoundingClientRect(),
-          label: node.querySelector('.section-face-label')!.getBoundingClientRect(),
+          label: node
+            .querySelector('.section-face-label, .section-rotation-label')!
+            .getBoundingClientRect(),
         }))
         const issues: string[] = []
-        if (handles.length !== 6) issues.push(`Expected six handles, found ${handles.length}`)
+        if (handles.length !== 7) issues.push(`Expected seven handles, found ${handles.length}`)
         const overlaps = (left: DOMRect, right: DOMRect) =>
           Math.min(left.right, right.right) - Math.max(left.left, right.left) > 0.5 &&
           Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top) > 0.5
@@ -292,6 +321,37 @@ test('selecting the box reveals face arrows that resize the live sample and rele
   await expect.poll(() => faceValue(page, 'Y', '최소')).toBe(99)
   await page.keyboard.press('Home')
   await expect.poll(() => faceValue(page, 'Y', '최소')).toBe(0)
+
+  const beforeRotation = await boundsOf(page)
+  const { x, y, moveX, moveY } = await rotationGesture(page, base, 46)
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  try {
+    await page.mouse.move(x + moveX, y + moveY, { steps: 8 })
+    await expect.poll(async () => Math.abs(await rotationAngle(page))).toBeGreaterThan(2)
+  } finally {
+    await page.mouse.up()
+  }
+  const viewport = (await canvas.boundingBox())!
+  const { camera, center } = fitSectionCamera(base, viewport)
+  const angle = ((await rotationAngle(page)) * Math.PI) / 180
+  const projectedX = new Vector3(1, 0, 0)
+    .applyAxisAngle(new Vector3(0, 1, 0), angle)
+    .add(center)
+    .project(camera)
+    .sub(center.clone().project(camera))
+  const expectedArrow = new Vector3(
+    projectedX.x * viewport.width,
+    -projectedX.y * viewport.height,
+    0,
+  ).normalize()
+  await expect
+    .poll(async () => {
+      const arrow = await arrowDirection(handle(page, 'X', '최대'))
+      return Math.hypot(arrow.x - expectedArrow.x, arrow.y - expectedArrow.y)
+    })
+    .toBeLessThan(0.01)
+  expect(await boundsOf(page)).toEqual(beforeRotation)
   await expectOrbitWorks(page)
   expect(errors).toEqual([])
 })
@@ -314,11 +374,11 @@ test('rotated IFC face arrows resize locally and the project restores the same c
   await expect(canvas).toHaveAttribute('data-section-box', 'true')
   expect(base.max[1] - base.min[1]).toBeGreaterThan(3)
   expect(base.max[1] - base.min[1]).toBeLessThan(4)
-  const rotation = rotationSlider(page)
+  const rotation = rotationGrip(page)
   const xHandle = handle(page, 'X', '최대')
   const beforeDirection = await arrowDirection(xHandle)
-  await rotation.fill('40')
-  await expect(canvas).toHaveAttribute('data-section-rotation-y', '40')
+  for (let step = 0; step < 3; step++) await rotation.press('Shift+ArrowUp')
+  await expect(canvas).toHaveAttribute('data-section-rotation-y', '45')
   expect(await boundsOf(page)).toEqual(base)
   await expect
     .poll(async () => {
@@ -342,7 +402,8 @@ test('rotated IFC face arrows resize locally and the project restores the same c
   await page.keyboard.press('Escape')
   await expect(rotation).toHaveCount(0)
   await selectBox(page, base)
-  await expect(rotation).toHaveValue('40')
+  await expect(rotation).toBeVisible()
+  await expect(canvas).toHaveAttribute('data-section-rotation-y', '45')
   await expectOrbitWorks(page)
 
   const toolbar = page.getByRole('region', { name: '프로젝트 작업공간', exact: true })
@@ -355,12 +416,12 @@ test('rotated IFC face arrows resize locally and the project restores the same c
   const picker = page.getByRole('dialog', { name: '프로젝트 열기', exact: true })
   await picker.getByRole('button', { name: 'handle-building 열기', exact: true }).click()
   await expect(picker).toHaveCount(0, { timeout: 45_000 })
-  await expect(canvas).toHaveAttribute('data-section-rotation-y', '40')
+  await expect(canvas).toHaveAttribute('data-section-rotation-y', '45')
   await expect(canvas).toHaveAttribute('data-section-selected', 'false')
   expect(await boundsOf(page)).toEqual(clipped)
   await expect(rotation).toHaveCount(0)
   await canvas.press('Enter')
-  await expect(rotation).toHaveValue('40')
+  await expect(rotation).toBeVisible()
 })
 
 test('touch dragging does not scroll the page and touch cancellation restores orbiting', async ({
@@ -374,15 +435,17 @@ test('touch dragging does not scroll the page and touch cancellation restores or
   try {
     const page = await context.newPage()
     await openBuilding(page)
-    await enableSection(page, true)
+    const base = await enableSection(page, true)
     const button = handle(page, 'Y', '최대')
     await button.scrollIntoViewIfNeeded()
     const client = await context.newCDPSession(page)
-    async function touchDrag(pixels: number, cancel: boolean) {
-      const direction = await arrowDirection(button)
-      const bounds = (await button.boundingBox())!
-      const x = bounds.x + bounds.width / 2
-      const y = bounds.y + bounds.height / 2
+    async function touchGesture(
+      x: number,
+      y: number,
+      moveX: number,
+      moveY: number,
+      cancel: boolean,
+    ) {
       await client.send('Input.dispatchTouchEvent', {
         type: 'touchStart',
         touchPoints: [{ x, y, id: 1 }],
@@ -392,8 +455,8 @@ test('touch dragging does not scroll the page and touch cancellation restores or
           type: 'touchMove',
           touchPoints: [
             {
-              x: x - (direction.x * pixels * step) / 6,
-              y: y - (direction.y * pixels * step) / 6,
+              x: x + (moveX * step) / 6,
+              y: y + (moveY * step) / 6,
               id: 1,
             },
           ],
@@ -404,11 +467,27 @@ test('touch dragging does not scroll the page and touch cancellation restores or
         touchPoints: [],
       })
     }
+    async function touchDrag(pixels: number, cancel: boolean) {
+      const direction = await arrowDirection(button)
+      const bounds = (await button.boundingBox())!
+      await touchGesture(
+        bounds.x + bounds.width / 2,
+        bounds.y + bounds.height / 2,
+        -direction.x * pixels,
+        -direction.y * pixels,
+        cancel,
+      )
+    }
     const scrollBefore = await page.evaluate(() => window.scrollY)
     await touchDrag(40, false)
     await expect.poll(() => faceValue(page, 'Y', '최대')).toBeLessThan(95)
     expect(await page.evaluate(() => window.scrollY)).toBeCloseTo(scrollBefore, 0)
     await touchDrag(15, true)
+    const { x, y, moveX, moveY } = await rotationGesture(page, base, 23)
+    const scrollBeforeRotation = await page.evaluate(() => window.scrollY)
+    await touchGesture(x, y, moveX, moveY, false)
+    await expect.poll(async () => Math.abs(await rotationAngle(page))).toBeGreaterThan(2)
+    expect(await page.evaluate(() => window.scrollY)).toBeCloseTo(scrollBeforeRotation, 0)
     await expectOrbitWorks(page)
     await expectSeparatedHandles(page)
     expect(

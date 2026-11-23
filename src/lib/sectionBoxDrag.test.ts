@@ -3,7 +3,9 @@ import * as THREE from 'three'
 import type { SectionBoxSettings } from './sectionBox'
 import {
   dragSectionPercent,
+  normalizeSectionRotation,
   projectSectionAxis,
+  projectSectionRotation,
   separateSectionHandles,
   setSectionFace,
 } from './sectionBoxDrag'
@@ -70,6 +72,84 @@ describe('projected section face dragging', () => {
     expect(dragSectionPercent(30, 1, 1, { x: 0, y: 0, fallback: false })).toBe(30)
     expect(dragSectionPercent(30, 1, 1, { x: Infinity, y: 0, fallback: false })).toBe(30)
     expect(dragSectionPercent(NaN, NaN, 1, { x: 0, y: 0, fallback: false })).toBe(0)
+  })
+})
+
+describe('projected section rotation dragging', () => {
+  const viewport = { left: 120, top: 40, width: 1000, height: 800 }
+
+  const project = (camera: THREE.Camera, point: THREE.Vector3): [number, number] => {
+    const projected = point.project(camera)
+    return [
+      viewport.left + (viewport.width * (projected.x + 1)) / 2,
+      viewport.top + (viewport.height * (1 - projected.y)) / 2,
+    ]
+  }
+
+  it('tracks positive and negative yaw continuously through a complete turn', () => {
+    const camera = new THREE.PerspectiveCamera(50, viewport.width / viewport.height, 0.1, 100)
+    const pivot = new THREE.Vector3(2, 1, -3)
+    camera.position.set(9, 12, 10)
+    camera.lookAt(pivot)
+    camera.updateMatrixWorld()
+    const at = (degrees: number) =>
+      project(
+        camera,
+        new THREE.Vector3(3, 0, 0)
+          .applyAxisAngle(new THREE.Vector3(0, 1, 0), THREE.MathUtils.degToRad(degrees))
+          .add(pivot),
+      )
+    const rotation = projectSectionRotation(camera, pivot, viewport, ...at(170))
+    expect(rotation(...at(-170))).toBeCloseTo(20)
+    expect(rotation(...at(-50))).toBeCloseTo(140)
+    expect(rotation(...at(80))).toBeCloseTo(270)
+    expect(rotation(...at(170))).toBeCloseTo(360)
+    expect(rotation(...at(-170))).toBeCloseTo(380)
+    expect(rotation(...at(170))).toBeCloseTo(360)
+    expect(rotation(...at(80))).toBeCloseTo(270)
+  })
+
+  it('retains the drag angle when a later pointer sample reaches the pivot or is invalid', () => {
+    const camera = frontCamera()
+    camera.position.y = 12
+    camera.lookAt(0, 0, 0)
+    camera.updateMatrixWorld()
+    const pivot = new THREE.Vector3()
+    const start = project(camera, new THREE.Vector3(3, 0, 0))
+    const rightAngle = project(camera, new THREE.Vector3(0, 0, -3))
+    const halfTurn = project(camera, new THREE.Vector3(-3, 0, 0))
+    const rotation = projectSectionRotation(camera, pivot, viewport, ...start)
+    expect(rotation(...rightAngle)).toBeCloseTo(90)
+    expect(rotation(...project(camera, pivot.clone()))).toBeCloseTo(90)
+    expect(rotation(NaN, 0)).toBeCloseTo(90)
+    expect(rotation(...halfTurn)).toBeCloseTo(180)
+  })
+
+  it('uses horizontal pointer movement for an edge-on view or when starting at the pivot', () => {
+    const camera = frontCamera()
+    const pivot = new THREE.Vector3()
+    const start = project(camera, new THREE.Vector3(3, 0, 0))
+    const edgeOn = projectSectionRotation(camera, pivot, viewport, ...start)
+    expect(edgeOn(start[0] + 28, start[1] + 70)).toBe(28)
+    expect(edgeOn(NaN, NaN)).toBe(28)
+
+    camera.position.y = 12
+    camera.lookAt(pivot)
+    camera.updateMatrixWorld()
+    const center = project(camera, pivot.clone())
+    const atPivot = projectSectionRotation(camera, pivot, viewport, ...center)
+    expect(atPivot(center[0] - 30, center[1] + 20)).toBe(-30)
+  })
+
+  it('rounds wrapped angles, preserves both 180 endpoints and canonicalizes zero', () => {
+    expect(normalizeSectionRotation(181)).toBe(-179)
+    expect(normalizeSectionRotation(-181)).toBe(179)
+    expect(normalizeSectionRotation(-180)).toBe(-180)
+    expect(normalizeSectionRotation(180)).toBe(180)
+    expect(normalizeSectionRotation(400.49)).toBe(40)
+    expect(normalizeSectionRotation(400.51)).toBe(41)
+    expect(normalizeSectionRotation(-360)).toBe(0)
+    expect(normalizeSectionRotation(NaN)).toBe(0)
   })
 })
 

@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -10,11 +11,14 @@ import {
 } from 'react'
 import { useThree } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
+import { RotateCw } from 'lucide-react'
 import * as THREE from 'three'
 import type { SectionBoxSettings } from '../lib/sectionBox'
 import {
   dragSectionPercent,
+  normalizeSectionRotation,
   projectSectionAxis,
+  projectSectionRotation,
   separateSectionHandles,
   setSectionFace,
   type SectionAxis,
@@ -30,21 +34,21 @@ type Props = {
   onChange: (next: SectionBoxSettings) => void
 }
 type Orbit = { enabled: boolean }
+type Face = { axis: SectionAxis; side: 0 | 1 }
+type DragMotion =
+  | ({ kind: 'face'; startValue: number; projection: SectionDragProjection } & Face)
+  | { kind: 'rotation'; startValue: number; project: (x: number, y: number) => number }
 type Drag = {
   pointerId: number
   button: HTMLButtonElement
-  axis: SectionAxis
-  side: 0 | 1
   startX: number
   startY: number
-  startValue: number
-  projection: SectionDragProjection
+  motion: DragMotion
   controls: Orbit | null
   previousEnabled: boolean
   hadCursorClass: boolean
 }
-type Face = { axis: SectionAxis; side: 0 | 1 }
-type ScreenFace = {
+type ScreenHandle = {
   x: number
   y: number
   anchorX: number
@@ -52,7 +56,11 @@ type ScreenFace = {
   angle: number
   fallback: boolean
 }
-type HandleLayout = (camera: THREE.Camera, width: number, height: number) => Map<string, ScreenFace>
+type HandleLayout = (
+  camera: THREE.Camera,
+  width: number,
+  height: number,
+) => Map<string, ScreenHandle>
 const axes: SectionAxis[] = ['x', 'y', 'z']
 const faces: Face[] = axes.flatMap((axis) => [
   { axis, side: 0 as const },
@@ -60,6 +68,7 @@ const faces: Face[] = axes.flatMap((axis) => [
 ])
 const axisColors = { x: '#b37456', y: '#39826d', z: '#507fa6' }
 const dragCursorClass = 'section-handle-dragging'
+const ignoreRaycast = () => undefined
 
 export default function SectionBoxHandles({
   baseBounds,
@@ -68,12 +77,40 @@ export default function SectionBoxHandles({
   settings,
   onChange,
 }: Props) {
-  const { camera, controls, size } = useThree()
+  const { camera, controls, gl, size } = useThree()
   const current = useRef({ settings, onChange })
   current.current = { settings, onChange }
   const drag = useRef<Drag | null>(null)
-  const [activeFace, setActiveFace] = useState<string | null>(null)
-  const layoutCache = useRef<{ key: string; positions: Map<string, ScreenFace> } | null>(null)
+  const [activeHandle, setActiveHandle] = useState<string | null>(null)
+  const layoutCache = useRef<{ key: string; positions: Map<string, ScreenHandle> } | null>(null)
+  const pivot = useMemo(() => {
+    const center = baseBounds.getCenter(new THREE.Vector3())
+    center.y = bounds.max.y
+    return center
+  }, [baseBounds, bounds.max.y])
+  const radius =
+    Math.hypot(
+      Math.max(Math.abs(bounds.min.x - pivot.x), Math.abs(bounds.max.x - pivot.x)),
+      Math.max(Math.abs(bounds.min.z - pivot.z), Math.abs(bounds.max.z - pivot.z)),
+    ) * 1.08
+  const rotationOrigin = useMemo(
+    () =>
+      pivot
+        .clone()
+        .add(new THREE.Vector3(radius * Math.SQRT1_2, 0, -radius * Math.SQRT1_2))
+        .applyMatrix4(transform),
+    [pivot, radius, transform],
+  )
+  const guide = useMemo(
+    () =>
+      Float32Array.from(
+        Array.from({ length: 64 }, (_, index) => {
+          const angle = (index / 64) * 2 * Math.PI
+          return [Math.cos(angle) * radius, 0, Math.sin(angle) * radius]
+        }).flat(),
+      ),
+    [radius],
+  )
   const layout: HandleLayout = useCallback(
     (viewCamera, width, height) => {
       const key = [
@@ -117,6 +154,18 @@ export default function SectionBoxHandles({
           fallback: axis.fallback,
         }
       })
+      const rotationPoint = rotationOrigin.clone().project(viewCamera)
+      const rotationX = (rotationPoint.x * 0.5 + 0.5) * width
+      const rotationY = (-rotationPoint.y * 0.5 + 0.5) * height
+      projected.push({
+        id: 'rotation',
+        x: rotationX,
+        y: rotationY,
+        anchorX: rotationX,
+        anchorY: rotationY,
+        angle: 0,
+        fallback: false,
+      })
       // A shared layout keeps nearby/back faces individually reachable after
       // orbiting. This clears both 42px touch targets and their lower labels,
       // including diagonally adjacent handles.
@@ -130,7 +179,7 @@ export default function SectionBoxHandles({
       layoutCache.current = { key, positions }
       return positions
     },
-    [baseBounds, bounds, transform],
+    [baseBounds, bounds, rotationOrigin, transform],
   )
 
   const finish = useCallback((notify = true) => {
@@ -146,7 +195,7 @@ export default function SectionBoxHandles({
     } catch {
       // The overlay can have been removed by changing view/model while dragging.
     }
-    if (notify) setActiveFace(null)
+    if (notify) setActiveHandle(null)
   }, [])
 
   useEffect(() => {
@@ -155,16 +204,26 @@ export default function SectionBoxHandles({
       if (!active || event.pointerId !== active.pointerId) return
       event.preventDefault()
       event.stopPropagation()
+      const latest = current.current
+      const { motion } = active
+      if (motion.kind === 'rotation') {
+        const rotationY = normalizeSectionRotation(
+          motion.startValue + motion.project(event.clientX, event.clientY),
+        )
+        if (rotationY !== (latest.settings.rotationY ?? 0)) {
+          latest.onChange({ ...latest.settings, rotationY })
+        }
+        return
+      }
       const value = dragSectionPercent(
-        active.startValue,
+        motion.startValue,
         event.clientX - active.startX,
         event.clientY - active.startY,
-        active.projection,
+        motion.projection,
       )
-      const latest = current.current
-      const next = setSectionFace(latest.settings, active.axis, active.side, value)
+      const next = setSectionFace(latest.settings, motion.axis, motion.side, value)
       if (
-        next.ranges[active.axis][active.side] !== latest.settings.ranges[active.axis][active.side]
+        next.ranges[motion.axis][motion.side] !== latest.settings.ranges[motion.axis][motion.side]
       )
         latest.onChange(next)
     }
@@ -198,8 +257,7 @@ export default function SectionBoxHandles({
 
   const start = (
     event: ReactPointerEvent<HTMLButtonElement>,
-    face: Face,
-    origin: THREE.Vector3,
+    faceHandle?: { face: Face; origin: THREE.Vector3 },
   ) => {
     event.stopPropagation()
     if (drag.current || !event.isPrimary || event.button !== 0) return
@@ -211,27 +269,43 @@ export default function SectionBoxHandles({
     const button = event.currentTarget
     const hadCursorClass = document.body.classList.contains(dragCursorClass)
     document.body.classList.add(dragCursorClass)
+    const motion: DragMotion = faceHandle
+      ? {
+          kind: 'face',
+          ...faceHandle.face,
+          startValue: current.current.settings.ranges[faceHandle.face.axis][faceHandle.face.side],
+          projection: projectSectionAxis(
+            camera,
+            faceHandle.origin,
+            faceHandle.face.axis,
+            baseBounds.max[faceHandle.face.axis] - baseBounds.min[faceHandle.face.axis],
+            size.width,
+            size.height,
+            transform,
+          ),
+        }
+      : {
+          kind: 'rotation',
+          startValue: current.current.settings.rotationY ?? 0,
+          project: projectSectionRotation(
+            camera,
+            pivot,
+            gl.domElement.getBoundingClientRect(),
+            event.clientX,
+            event.clientY,
+          ),
+        }
     drag.current = {
       pointerId: event.pointerId,
       button,
-      ...face,
       startX: event.clientX,
       startY: event.clientY,
-      startValue: current.current.settings.ranges[face.axis][face.side],
-      projection: projectSectionAxis(
-        camera,
-        origin,
-        face.axis,
-        baseBounds.max[face.axis] - baseBounds.min[face.axis],
-        size.width,
-        size.height,
-        transform,
-      ),
+      motion,
       controls: orbit,
       previousEnabled,
       hadCursorClass,
     }
-    setActiveFace(`${face.axis}-${face.side}`)
+    setActiveHandle(motion.kind === 'face' ? `${motion.axis}-${motion.side}` : 'rotation')
     button.focus({ preventScroll: true })
     try {
       button.setPointerCapture(event.pointerId)
@@ -240,18 +314,28 @@ export default function SectionBoxHandles({
     }
   }
 
-  const keyboard = (event: KeyboardEvent<HTMLButtonElement>, face: Face) => {
+  const keyboard = (event: KeyboardEvent<HTMLButtonElement>, face?: Face) => {
     const direction =
       event.key === 'ArrowRight' || event.key === 'ArrowUp'
         ? 1
         : event.key === 'ArrowLeft' || event.key === 'ArrowDown'
           ? -1
           : 0
-    if (!direction && event.key !== 'Home' && event.key !== 'End') return
+    if (!direction && event.key !== 'Home' && (!face || event.key !== 'End')) return
     event.preventDefault()
     event.stopPropagation()
     if (drag.current) return
     const latest = current.current
+    if (!face) {
+      const rotationY =
+        event.key === 'Home'
+          ? 0
+          : normalizeSectionRotation(
+              (latest.settings.rotationY ?? 0) + direction * (event.shiftKey ? 15 : 1),
+            )
+      latest.onChange({ ...latest.settings, rotationY })
+      return
+    }
     const value =
       event.key === 'Home'
         ? 0
@@ -263,6 +347,18 @@ export default function SectionBoxHandles({
 
   return (
     <>
+      <lineLoop position={pivot.toArray()} raycast={ignoreRaycast} renderOrder={11}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[guide, 3]} />
+        </bufferGeometry>
+        <lineBasicMaterial
+          color="#7962a2"
+          depthTest={false}
+          depthWrite={false}
+          transparent
+          opacity={activeHandle === 'rotation' ? 0.7 : 0.35}
+        />
+      </lineLoop>
       {faces.map((face) => (
         <FaceHandle
           key={`${face.axis}-${face.side}`}
@@ -271,15 +367,93 @@ export default function SectionBoxHandles({
           transform={transform}
           layout={layout}
           value={settings.ranges[face.axis][face.side]}
-          active={activeFace === `${face.axis}-${face.side}`}
-          onStart={start}
+          active={activeHandle === `${face.axis}-${face.side}`}
+          onStart={(event, selectedFace, origin) => start(event, { face: selectedFace, origin })}
           onKey={keyboard}
           onFinish={(event) => {
             if (event.pointerId === drag.current?.pointerId) finish()
           }}
         />
       ))}
+      <RotationHandle
+        origin={rotationOrigin}
+        layout={layout}
+        value={settings.rotationY ?? 0}
+        active={activeHandle === 'rotation'}
+        onStart={(event) => start(event)}
+        onKey={(event) => keyboard(event)}
+        onFinish={(event) => {
+          if (event.pointerId === drag.current?.pointerId) finish()
+        }}
+      />
     </>
+  )
+}
+
+function RotationHandle({
+  origin,
+  layout,
+  value,
+  active,
+  onStart,
+  onKey,
+  onFinish,
+}: {
+  origin: THREE.Vector3
+  layout: HandleLayout
+  value: number
+  active: boolean
+  onStart: (event: ReactPointerEvent<HTMLButtonElement>) => void
+  onKey: (event: KeyboardEvent<HTMLButtonElement>) => void
+  onFinish: (event: ReactPointerEvent<HTMLButtonElement>) => void
+}) {
+  const connector = useRef<SVGLineElement>(null)
+  return (
+    <Html
+      position={origin.toArray()}
+      center
+      zIndexRange={[30, 30]}
+      style={{ pointerEvents: 'none' }}
+      calculatePosition={(_object, camera, size) => {
+        const { x, y, anchorX, anchorY } = layout(camera, size.width, size.height).get('rotation')!
+        if (connector.current) {
+          connector.current.setAttribute('x2', String(anchorX - x))
+          connector.current.setAttribute('y2', String(anchorY - y))
+        }
+        return [x, y]
+      }}
+    >
+      <div className="section-face-position section-rotation-position">
+        <svg className="section-face-connector" width="1" height="1" aria-hidden="true">
+          <line ref={connector} x1="0" y1="0" x2="0" y2="0" />
+        </svg>
+        <button
+          type="button"
+          className="section-rotation-handle"
+          data-dragging={active ? 'true' : undefined}
+          title="드래그하여 단면상자 수평 회전"
+          aria-label="단면상자 수평 회전"
+          aria-description={`현재 ${value}도. 드래그하여 회전합니다. 방향키로 1도씩, Shift와 방향키로 15도씩 조절합니다. Home은 0도로 되돌립니다.`}
+          aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Home"
+          onPointerDown={onStart}
+          onLostPointerCapture={onFinish}
+          onKeyDown={onKey}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+        >
+          <RotateCw aria-hidden="true" />
+          <span className="section-rotation-label" aria-hidden="true">
+            회전 {value}°
+          </span>
+        </button>
+      </div>
+    </Html>
   )
 }
 

@@ -609,34 +609,6 @@
   gap: 9px;
   margin-left: auto;
 }
-.building-section-rotation,
-.building-section-rotation label {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-.building-section-rotation label {
-  min-height: 30px;
-  padding: 4px 7px;
-  color: #365943;
-  background: #f1f6ed;
-  border: 1px solid #dce7d4;
-  border-radius: 6px;
-  font-size: 10px;
-  white-space: nowrap;
-}
-.building-section-rotation input {
-  width: 92px;
-  height: 22px;
-  margin: 0;
-  accent-color: #54825e;
-  cursor: pointer;
-}
-.building-section-rotation span {
-  min-width: 5ch;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
 .building-section-toggle {
   display: inline-flex;
   align-items: center;
