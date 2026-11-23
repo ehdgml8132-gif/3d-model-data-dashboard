@@ -208,13 +208,16 @@ async function expectSeparatedHandles(page: Page) {
         const canvas = document.querySelector('canvas')!.getBoundingClientRect()
         const handles = [
           ...document.querySelectorAll('.section-face-handle, .section-rotation-handle'),
-        ].map((node) => ({
-          name: node.getAttribute('aria-label'),
-          button: node.getBoundingClientRect(),
-          label: node
-            .querySelector('.section-face-label, .section-rotation-label')!
-            .getBoundingClientRect(),
-        }))
+        ].map((node) => {
+          const label =
+            node.closest('.section-rotation-position')?.querySelector('.section-rotation-label') ??
+            node.querySelector('.section-face-label')
+          return {
+            name: node.getAttribute('aria-label'),
+            button: node.getBoundingClientRect(),
+            label: label!.getBoundingClientRect(),
+          }
+        })
         const issues: string[] = []
         if (handles.length !== 7) issues.push(`Expected seven handles, found ${handles.length}`)
         const overlaps = (left: DOMRect, right: DOMRect) =>
@@ -422,6 +425,9 @@ test('rotated IFC face arrows resize locally and the project restores the same c
   await expect(rotation).toHaveCount(0)
   await canvas.press('Enter')
   await expect(rotation).toBeVisible()
+  await expect(page.getByRole('button', { name: '회전 각도 입력', exact: true })).toHaveText(
+    '회전 45°',
+  )
 })
 
 test('touch dragging does not scroll the page and touch cancellation restores orbiting', async ({

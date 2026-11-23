@@ -44,7 +44,6 @@ import BuildingMetricFilter from './BuildingMetricFilter'
 import ProjectManager from './ProjectManager'
 import ViewerCube from './ViewerCube'
 import type { ViewerDirection } from './ViewerDirectionCamera'
-import SectionRotationInput from './SectionRotationInput'
 import { joinBusinessRows } from '../lib/business'
 import { buildProjectRecord, summarizeProject, writeProject } from '../projects/storage'
 import { embeddedProjectToOpen, finishEmbeddedProject } from '../projects/standalone'
@@ -964,26 +963,18 @@ export default function BuildingDashboard() {
                         <RotateCcw size={16} />
                       </button>
                       {sectionBoxSelected && sectionBox && (
-                        <div className="section-rotation-control">
-                          <SectionRotationInput
-                            angle={sectionBox.rotationY ?? 0}
-                            onChange={(rotationY) =>
-                              setSectionBox((current) => current && { ...current, rotationY })
-                            }
-                          />
-                          <button
-                            type="button"
-                            className="icon-button reset-view"
-                            title="단면 회전 초기화"
-                            aria-label="단면 회전 초기화"
-                            disabled={!(sectionBox.rotationY ?? 0)}
-                            onClick={() =>
-                              setSectionBox((current) => current && { ...current, rotationY: 0 })
-                            }
-                          >
-                            <RotateCcw size={14} />
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          className="icon-button reset-view"
+                          title="단면 회전 초기화"
+                          aria-label="단면 회전 초기화"
+                          disabled={!(sectionBox.rotationY ?? 0)}
+                          onClick={() =>
+                            setSectionBox((current) => current && { ...current, rotationY: 0 })
+                          }
+                        >
+                          <RotateCcw size={14} />
+                        </button>
                       )}
                     </div>
                   </div>
@@ -1088,7 +1079,7 @@ export default function BuildingDashboard() {
                       <span>
                         {sectionBox
                           ? sectionBoxSelected
-                            ? '화살표로 크기 조절 · 원형 손잡이를 드래그해 회전'
+                            ? '화살표로 크기 조절 · 회전 손잡이를 드래그하거나 각도 칸을 클릭'
                             : '단면상자 윤곽선을 클릭해 크기와 회전을 조절하세요'
                           : '부재 클릭 · 드래그하여 회전 · 스크롤로 확대'}
                       </span>

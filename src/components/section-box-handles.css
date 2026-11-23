@@ -65,7 +65,7 @@
 .section-rotation-handle:focus-visible {
   outline-color: var(--section-axis-color);
 }
-:is(.section-face-label, .section-rotation-label) {
+.section-face-label {
   position: absolute;
   top: calc(100% + 3px);
   left: 50%;
@@ -80,11 +80,15 @@
   pointer-events: none;
 }
 .section-rotation-label {
-  padding: 2px 5px;
-  border: 1px solid #ded9ef;
-  background: #f7f5ff;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  position: absolute;
+  top: calc(100% + 3px);
+  left: calc(50% + var(--section-rotation-label-offset, 0px));
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+.section-rotation-position[data-rotation-label-above='true'] .section-rotation-label {
+  top: auto;
+  bottom: calc(100% + 3px);
 }
 .section-face-value {
   display: none;

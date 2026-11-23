@@ -14,6 +14,7 @@ import { Html } from '@react-three/drei'
 import { RotateCw } from 'lucide-react'
 import * as THREE from 'three'
 import type { SectionBoxSettings } from '../lib/sectionBox'
+import SectionRotationInput from './SectionRotationInput'
 import {
   dragSectionPercent,
   normalizeSectionRotation,
@@ -380,6 +381,10 @@ export default function SectionBoxHandles({
         layout={layout}
         value={settings.rotationY ?? 0}
         active={activeHandle === 'rotation'}
+        onAngleChange={(rotationY) => {
+          const latest = current.current
+          latest.onChange({ ...latest.settings, rotationY })
+        }}
         onStart={(event) => start(event)}
         onKey={(event) => keyboard(event)}
         onFinish={(event) => {
@@ -395,6 +400,7 @@ function RotationHandle({
   layout,
   value,
   active,
+  onAngleChange,
   onStart,
   onKey,
   onFinish,
@@ -403,10 +409,12 @@ function RotationHandle({
   layout: HandleLayout
   value: number
   active: boolean
+  onAngleChange: (angle: number) => void
   onStart: (event: ReactPointerEvent<HTMLButtonElement>) => void
   onKey: (event: KeyboardEvent<HTMLButtonElement>) => void
   onFinish: (event: ReactPointerEvent<HTMLButtonElement>) => void
 }) {
+  const position = useRef<HTMLDivElement>(null)
   const connector = useRef<SVGLineElement>(null)
   return (
     <Html
@@ -420,10 +428,16 @@ function RotationHandle({
           connector.current.setAttribute('x2', String(anchorX - x))
           connector.current.setAttribute('y2', String(anchorY - y))
         }
+        if (position.current) {
+          const inset = Math.min(36, size.width / 2)
+          const labelX = THREE.MathUtils.clamp(x, inset, size.width - inset)
+          position.current.style.setProperty('--section-rotation-label-offset', `${labelX - x}px`)
+          position.current.dataset.rotationLabelAbove = y > size.height - 52 ? 'true' : 'false'
+        }
         return [x, y]
       }}
     >
-      <div className="section-face-position section-rotation-position">
+      <div ref={position} className="section-face-position section-rotation-position">
         <svg className="section-face-connector" width="1" height="1" aria-hidden="true">
           <line ref={connector} x1="0" y1="0" x2="0" y2="0" />
         </svg>
@@ -448,10 +462,8 @@ function RotationHandle({
           }}
         >
           <RotateCw aria-hidden="true" />
-          <span className="section-rotation-label" aria-hidden="true">
-            회전 {value}°
-          </span>
         </button>
+        <SectionRotationInput angle={value} onChange={onAngleChange} />
       </div>
     </Html>
   )
